@@ -217,6 +217,11 @@ static int lsm6dsl_accel_range_set(const struct device *dev, int32_t range)
 }
 #endif
 
+int lsm6dsl_accel_set_upper_threshold_trigger(const struct device *dev,	const struct sensor_value *val){
+	struct lsm6dsl_data *data = dev->data;
+	data->accel_upper_threshold_ms2 = (double)  sensor_value_to_double(val);	
+};
+
 static int lsm6dsl_accel_config(const struct device *dev,
 				enum sensor_channel chan,
 				enum sensor_attribute attr,
@@ -226,13 +231,16 @@ static int lsm6dsl_accel_config(const struct device *dev,
 #ifdef LSM6DSL_ACCEL_FS_RUNTIME
 	case SENSOR_ATTR_FULL_SCALE:
 		return lsm6dsl_accel_range_set(dev, sensor_ms2_to_g(val));
+	case SENSOR_ATTR_UPPER_THRESH:
+		LOG_DBG("Setting SENSOR_ATTR_UPPER_THRESH");
+		return lsm6dsl_accel_set_upper_threshold_trigger(dev, val);
 #endif
 #ifdef LSM6DSL_ACCEL_ODR_RUNTIME
 	case SENSOR_ATTR_SAMPLING_FREQUENCY:
 		return lsm6dsl_accel_odr_set(dev, val->val1);
 #endif
 	default:
-		LOG_DBG("Accel attribute not supported.");
+		LOG_DBG("Accel attribute [%i] not supported.", attr);
 		return -ENOTSUP;
 	}
 

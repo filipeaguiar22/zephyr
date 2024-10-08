@@ -47,8 +47,64 @@ int lsm6dsl_trigger_set(const struct device *dev,
 {
 	const struct lsm6dsl_config *config = dev->config;
 	struct lsm6dsl_data *drv_data = dev->data;
+	uint8_t register_value;
 
-	__ASSERT_NO_MSG(trig->type == SENSOR_TRIG_DATA_READY);
+	LOG_DBG("lsm6dsl_trigger_set type: %d", trig->type);
+	__ASSERT(trig->type == SENSOR_TRIG_DATA_READY, "It is of type SENSOR_TRIG_DATA_READY");
+	LOG_DBG("continuing type: %d", trig->type);
+	if (trig->type == SENSOR_TRIG_THRESHOLD){		
+		LOG_DBG("trigger type is: SENSOR_TRIG_THRESHOLD");
+
+		/*Enable write access to register bank A and B*/		
+		register_value = LSM6DSL_MASK_FUNC_CFG_EN;
+		LOG_DBG("SET CTRL10_C 0x%x ", register_value);
+		if (drv_data->hw_tf->write_data(dev,
+					LSM6DSL_REG_FUNC_CFG_ACCESS,
+					&register_value, 1) < 0) {
+			LOG_ERR("Could not enable write function to bank A and B");
+			return -EIO;			
+		}
+
+		/*Modify embedded function register in Bank A.All modif
+		ications of the content of the embedded functions registers have to be performed
+		with the device in power-down mode. */
+		/*TODO: Power off*/
+
+		/*TODO: Modify register in bank A for sensing threshold*/
+
+		/*TODO: Power on device*/
+
+		/*Significant motion configuration register */
+		register_value = LSM6DSL_MASK_CTRL10_C_FUNC_EN | LSM6DSL_MASK_CTRL10_C_SIGN_MOTION_EN;	
+		LOG_DBG("SET CTRL10_C 0x%x ", register_value);
+		if (drv_data->hw_tf->write_data(dev,
+					LSM6DSL_REG_CTRL10_C,
+					&register_value, 1) < 0) {
+			LOG_ERR("Could not enable motion detection function");
+			return -EIO;			
+		}
+
+		/* Enable embedded functionalities */
+		register_value = LSM6DSL_MASK_CTRL10_C_FUNC_EN | LSM6DSL_MASK_CTRL10_C_SIGN_MOTION_EN;	
+		LOG_DBG("SET CTRL10_C 0x%x ", register_value);
+		if (drv_data->hw_tf->write_data(dev,
+					LSM6DSL_REG_CTRL10_C,
+					&register_value, 1) < 0) {
+			LOG_ERR("Could not enable motion detection function");
+			return -EIO;			
+		}
+
+		/* enable significant motion detection interrupt signal 1*/
+		//update int1_ctrl  for INT1_SIGN_MOT  			
+		register_value = LSM6DSL_MASK_INT1_CTRL_SIGN_MOT;	
+		LOG_DBG("SET CTRL1 0x%x ", register_value);
+		if (drv_data->hw_tf->write_data(dev,
+					LSM6DSL_REG_INT1_CTRL,
+					&register_value, 1) < 0) {
+			LOG_ERR("Could not enable motion detection int1 interrupt.");
+			return -EIO;			
+		}
+	}
 
 	/* If irq_gpio is not configured in DT just return error */
 	if (!config->int_gpio.port) {
@@ -87,6 +143,18 @@ static void lsm6dsl_gpio_callback(const struct device *dev,
 static void lsm6dsl_thread_cb(const struct device *dev)
 {
 	struct lsm6dsl_data *drv_data = dev->data;
+	
+	LOG_DBG("In progress... Determine the cause of interrupt");	
+	if (0){
+		//Determine what triggered the interrupt	
+		uint8_t FUNC_SRC_value[2];
+
+		if (drv_data->hw_tf->read_data(dev, LSM6DSL_REG_FUNC_SRC1, FUNC_SRC_value,2)){
+			LOG_WRN("Error while reading reg FUNC_SRC1");
+			return;
+		};
+		LOG_DBG ("Trigger int1 caused by 0x%x   0x%x" , FUNC_SRC_value[0],  FUNC_SRC_value[1]);
+	}
 
 	if (drv_data->data_ready_handler != NULL) {
 		drv_data->data_ready_handler(dev,

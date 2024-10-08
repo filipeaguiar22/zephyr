@@ -669,7 +669,7 @@ struct lsm6dsl_data {
 #ifdef CONFIG_LSM6DSL_TRIGGER
 	const struct device *dev;
 	struct gpio_callback gpio_cb;
-
+	double accel_upper_threshold_ms2;
 	const struct sensor_trigger *data_ready_trigger;
 	sensor_trigger_handler_t data_ready_handler;
 
@@ -698,6 +698,8 @@ int lsm6dsl_trigger_set(const struct device *dev,
 			sensor_trigger_handler_t handler);
 
 int lsm6dsl_init_interrupt(const struct device *dev);
+
+int lsm6dsl_accel_set_upper_threshold_trigger(const struct device *dev,	const struct sensor_value *val);
 #endif
 
 #endif /* ZEPHYR_DRIVERS_SENSOR_LSM6DSL_LSM6DSL_H_ */
