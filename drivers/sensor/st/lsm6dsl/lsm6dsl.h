@@ -276,7 +276,7 @@
 #define LSM6DSL_MASK_MASTER_CONFIG_MASTER_ON		BIT(0)
 #define LSM6DSL_SHIFT_MASTER_CONFIG_MASTER_ON		0
 
-#define LSM6DSL_REG_WAKE_UP_SRC				0x1B
+#define LSM6DSL_REG_WAKE_UP_SRC					0x1B
 #define LSM6DSL_MASK_WAKE_UP_SRC_FF_IA			BIT(5)
 #define LSM6DSL_SHIFT_WAKE_UP_SRC_FF_IA			5
 #define LSM6DSL_MASK_WAKE_UP_SRC_SLEEP_STATE_IA		BIT(4)
@@ -552,6 +552,10 @@
 #define LSM6DSL_REG_Y_OFS_USR				0x74
 #define LSM6DSL_REG_Z_OFS_USR				0x75
 
+/* BAN A memory Map */
+#define LSM6DSL_BANK_A_SM_THS				0x13
+
+
 
 /* Accel sensor sensitivity grain is 61 ug/LSB */
 #define SENSI_GRAIN_XL				61LL
@@ -644,6 +648,7 @@ struct lsm6dsl_data {
 	int accel_sample_x;
 	int accel_sample_y;
 	int accel_sample_z;
+	int accel_fs;  /*accelerometer full scale*/
 	float accel_sensitivity;
 	int gyro_sample_x;
 	int gyro_sample_y;
@@ -671,7 +676,9 @@ struct lsm6dsl_data {
 	struct gpio_callback gpio_cb;
 	double accel_upper_threshold_ms2;
 	const struct sensor_trigger *data_ready_trigger;
+	const struct sensor_trigger *data_threshold_trigger;
 	sensor_trigger_handler_t data_ready_handler;
+	sensor_trigger_handler_t threshold_handler;
 
 #if defined(CONFIG_LSM6DSL_TRIGGER_OWN_THREAD)
 	K_KERNEL_STACK_MEMBER(thread_stack, CONFIG_LSM6DSL_THREAD_STACK_SIZE);

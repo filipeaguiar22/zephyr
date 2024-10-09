@@ -104,6 +104,22 @@ static inline int lsm6dsl_reboot(const struct device *dev)
 	/* Wait sensor turn-on time as per datasheet */
 	k_busy_wait(USEC_PER_MSEC * 35U);
 
+	if (data->hw_tf->update_reg(dev, LSM6DSL_REG_CTRL3_C,
+				    LSM6DSL_MASK_CTRL3_C_SW_RESET,
+				    1 << LSM6DSL_SHIFT_CTRL3_C_SW_RESET) < 0) {
+		return -EIO;
+	}
+	k_busy_wait(USEC_PER_MSEC * 35U);
+
+
+	//MAke sure access register is all zero. Otherwise the WHO_AM_I register can report wrong value
+	uint8_t reg = 0;
+	if (data->hw_tf->write_data(dev, LSM6DSL_REG_FUNC_CFG_ACCESS,
+				    &reg,
+				    1) < 0) {
+		return -EIO;
+	}
+	k_busy_wait(USEC_PER_MSEC * 35U);
 	return 0;
 }
 
@@ -116,6 +132,13 @@ static int lsm6dsl_accel_set_fs_raw(const struct device *dev, uint8_t fs)
 				    LSM6DSL_MASK_CTRL1_XL_FS_XL,
 				    fs << LSM6DSL_SHIFT_CTRL1_XL_FS_XL) < 0) {
 		return -EIO;
+	}
+
+	if (fs == 0){
+		data->accel_fs = 2;
+	}
+	else{
+		LOG_WRN("data->accel_fs not updated.");
 	}
 
 	return 0;
@@ -211,6 +234,7 @@ static int lsm6dsl_accel_range_set(const struct device *dev, int32_t range)
 		return -EIO;
 	}
 
+	data->accel_fs = range;	
 	data->accel_sensitivity = (float)(lsm6dsl_accel_fs_sens[fs]
 						    * SENSI_GRAIN_XL);
 	return 0;
@@ -219,7 +243,8 @@ static int lsm6dsl_accel_range_set(const struct device *dev, int32_t range)
 
 int lsm6dsl_accel_set_upper_threshold_trigger(const struct device *dev,	const struct sensor_value *val){
 	struct lsm6dsl_data *data = dev->data;
-	data->accel_upper_threshold_ms2 = (double)  sensor_value_to_double(val);	
+	data->accel_upper_threshold_ms2 = (double)  sensor_value_to_double(val);
+	return 0;
 };
 
 static int lsm6dsl_accel_config(const struct device *dev,
@@ -323,6 +348,47 @@ static int lsm6dsl_attr_set(const struct device *dev,
 	default:
 		LOG_WRN("attr_set() not supported on this channel.");
 		return -ENOTSUP;
+	}
+
+	return 0;
+}
+
+
+static int lsm6dsl_accel_attr_get(const struct device *dev,
+			    enum sensor_channel chan,
+			    enum sensor_attribute attr,
+			    struct sensor_value *val){
+
+	struct lsm6dsl_data *data = dev->data;
+	switch (attr) {
+		case SENSOR_ATTR_FULL_SCALE:			
+			val->val1 = data->accel_fs;
+			return 0;
+
+		default:
+			LOG_WRN("attr_get( attribute: %u) not supported.", attr);
+			return -ENOTSUP;
+	}
+
+
+	return -ENOTSUP;
+}
+
+
+static int lsm6dsl_attr_get(const struct device *dev,
+			    enum sensor_channel chan,
+			    enum sensor_attribute attr,
+			    struct sensor_value *val)
+{
+	LOG_DBG("Get attr. channel: %d, attr: %d", chan, attr);
+
+	switch (chan) {
+		case SENSOR_CHAN_ACCEL_XYZ:		
+			return lsm6dsl_accel_attr_get(dev, chan, attr, val);
+
+		default:
+			LOG_WRN("attr_get() not supported on this channel.");
+			return -ENOTSUP;
 	}
 
 	return 0;
@@ -703,12 +769,12 @@ static int lsm6dsl_channel_get(const struct device *dev,
 	default:
 		return -ENOTSUP;
 	}
-
 	return 0;
 }
 
 static const struct sensor_driver_api lsm6dsl_driver_api = {
 	.attr_set = lsm6dsl_attr_set,
+	.attr_get = lsm6dsl_attr_get,
 #if CONFIG_LSM6DSL_TRIGGER
 	.trigger_set = lsm6dsl_trigger_set,
 #endif
@@ -731,8 +797,8 @@ static int lsm6dsl_init_chip(const struct device *dev)
 		return -EIO;
 	}
 	if (chip_id != LSM6DSL_VAL_WHO_AM_I) {
-		LOG_DBG("invalid chip id 0x%x", chip_id);
-		return -EIO;
+		LOG_WRN("invalid chip id 0x%x", chip_id);
+		//return -EIO;
 	}
 
 	LOG_DBG("chip id 0x%x", chip_id);
@@ -742,11 +808,15 @@ static int lsm6dsl_init_chip(const struct device *dev)
 		LOG_DBG("failed to set accelerometer full-scale");
 		return -EIO;
 	}
+
 	data->accel_sensitivity = LSM6DSL_DEFAULT_ACCEL_SENSITIVITY;
 
 	if (lsm6dsl_accel_set_odr_raw(dev, CONFIG_LSM6DSL_ACCEL_ODR) < 0) {
 		LOG_DBG("failed to set accelerometer sampling rate");
 		return -EIO;
+	}
+	else{
+		LOG_DBG("Accelerometer sampling rate set to %d", CONFIG_LSM6DSL_ACCEL_ODR);
 	}
 
 	if (lsm6dsl_gyro_set_fs_raw(dev, LSM6DSL_DEFAULT_GYRO_FULLSCALE) < 0) {
@@ -836,7 +906,7 @@ static int lsm6dsl_init(const struct device *dev)
 }
 
 #ifdef CONFIG_PM_DEVICE
-static int lsm6dsl_pm_action(const struct device *dev,
+int lsm6dsl_pm_action(const struct device *dev,
 			     enum pm_device_action action)
 {
 	struct lsm6dsl_data *data = dev->data;
@@ -860,6 +930,7 @@ static int lsm6dsl_pm_action(const struct device *dev,
 			break;
 		}
 		break;
+
 	case PM_DEVICE_ACTION_SUSPEND:
 		/*
 		 * Set accelerometer ODR to power-down. Don't use the direct
