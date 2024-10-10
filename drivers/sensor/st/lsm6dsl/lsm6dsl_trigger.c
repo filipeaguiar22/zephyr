@@ -71,7 +71,6 @@ int lsm6dsl_trigger_set(const struct device *dev,
 				return -EIO;			
 			}
 
-
 			/*Write 00h to WAKE_UP_DUR // No duration */
 			register_value = 0x00;
 			LOG_DBG("SET LSM6DSL_REG_WAKE_UP_DUR 0x%x ", register_value);
@@ -96,7 +95,7 @@ int lsm6dsl_trigger_set(const struct device *dev,
 												(int) (threshold_g * 1000),
 												register_value);
 								
-			register_value = 0x02;  //TODO: Set the threshold
+			
 			LOG_DBG("SET LSM6DSL_REG_WAKE_UP_THS 0x%x ", register_value);
 			if (drv_data->hw_tf->write_data(dev,
 						LSM6DSL_REG_WAKE_UP_THS,
@@ -283,6 +282,8 @@ static void lsm6dsl_thread_cb(const struct device *dev)
 			if (drv_data->threshold_handler != NULL) {
 				drv_data->threshold_handler(dev, drv_data->data_threshold_trigger);
 			}
+
+			setup_irq(dev, true);
 			return;
 		}
 
