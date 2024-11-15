@@ -134,11 +134,25 @@ static int lsm6dsl_accel_set_fs_raw(const struct device *dev, uint8_t fs)
 		return -EIO;
 	}
 
-	if (fs == 0){
-		data->accel_fs = 2;
-	}
-	else{
-		LOG_WRN("data->accel_fs not updated.");
+	switch (fs) {
+		case 0:
+			data->accel_fs = 2;
+			LOG_DBG("data->accel_fs set to 2");
+			break;
+		case 1:
+			data->accel_fs = 16;
+			LOG_DBG("data->accel_fs set to 16");
+			break;
+		case 2:
+			data->accel_fs = 4;
+			LOG_DBG("data->accel_fs set to 4");
+			break;
+		case 3:
+			data->accel_fs = 8;
+			LOG_DBG("data->accel_fs set to 8");
+			break;			
+		default:
+			LOG_WRN("data->accel_fs not updated. New fs code %u", fs);
 	}
 
 	return 0;
@@ -247,6 +261,133 @@ int lsm6dsl_accel_set_upper_threshold_trigger(const struct device *dev,	const st
 	return 0;
 };
 
+int lsm6dsl_accel_set_offset(const struct device *dev,	enum sensor_channel  chan ,const struct sensor_value *val){
+	struct lsm6dsl_data *data = dev->data;
+	uint16_t register_addr;
+	
+	struct lsm6dsl_data *drv_data = dev->data;
+	double offset_ms2 = sensor_value_to_double(val);
+	double offset_g =  offset_ms2 / 9.81;
+	LOG_DBG(" Setting offset to  %f [ms2]   ->  %f [g]", offset_ms2, offset_g);	
+	if (abs(offset_g) > 1.9){
+		LOG_ERR("Offset is too high. Max value is 1.9 [g]. Requested: %lf [g] or %lf", offset_g, offset_ms2);
+		return -EINVAL;
+	}
+
+	switch (chan) {
+		case SENSOR_CHAN_ACCEL_X:
+			LOG_DBG("Setting SENSOR_CHAN_ACCEL_X OFFSET . currently set to: %f", (double) data->accel_offset_x); 
+			
+			break;
+		case SENSOR_CHAN_ACCEL_Y:
+			LOG_DBG("Setting SENSOR_CHAN_ACCEL_Y OFFSET . currently set to: %f", (double) data->accel_offset_y);
+			
+			break;
+		case SENSOR_CHAN_ACCEL_Z:
+			LOG_DBG("Setting SENSOR_CHAN_ACCEL_Z OFFSET . currently set to: %f", (double) data->accel_offset_z);
+			
+			break;
+		default:
+			LOG_ERR("Setting CHANNEL [%i] not supported.", chan);
+			return -EINVAL;
+	}
+
+	//current of sets
+	double current_offset_g[3] = {data->accel_offset_x, data->accel_offset_y, data->accel_offset_z};
+	char axis[3] = {'X', 'Y', 'Z'};
+	int8_t register_value_w0[3] = {0, 0, 0};
+	int8_t register_value_w1[3] = {0, 0, 0};
+
+	bool weight_flag = data->accel_offset_weight;
+	for (int i=0; i<3; i++){
+		register_value_w0[i]= (int8_t) (current_offset_g[i] * 1024 );  // 1024 = 2^-10
+		register_value_w1[i]= (int8_t) (current_offset_g[i] * 64 );  // 64 = 2^-6
+		LOG_DBG("Current offset %c: %f [g] -> %i [raw_1]   %i [raw_2] ", axis[i], current_offset_g[i], register_value_w0[i], register_value_w1[i]);	
+	}
+
+	//update value in function
+	switch (chan) {
+		case SENSOR_CHAN_ACCEL_X:
+			current_offset_g[0] = offset_g;			
+			break;
+		case SENSOR_CHAN_ACCEL_Y:
+			current_offset_g[1] = offset_g;			
+			break;
+		case SENSOR_CHAN_ACCEL_Z:
+			current_offset_g[2] = offset_g;			
+			break;
+		default:
+			LOG_ERR("Setting CHANNEL [%i] not supported.", chan);
+			return -EINVAL;
+	}
+
+	for (int i=0; i<3; i++){
+		register_value_w0[i]= (int8_t) (current_offset_g[i] * 1024 );  // 1024 = 2^-10
+		register_value_w1[i]= (int8_t) (current_offset_g[i] * 64 );  // 64 = 2^-6
+		LOG_DBG("Updated offset %c: %f [g] -> %i [raw_1]   %i [raw_2] ", axis[i], current_offset_g[i], register_value_w0[i], register_value_w1[i]);
+	}
+
+	//decide if the offset needs to be modified
+	double max =-100.0;
+	for (int i=0; i<3; i++){
+		if (abs(current_offset_g[i]) > max){
+			max = abs(current_offset_g[i]);
+		}
+	}
+	bool new_weight_flag = max > 0.124 ? true : false;  // 0.124 = 127 / 1024
+	LOG_DBG("Max abs offset: %f [g]. New new_weight_flag %i", max, new_weight_flag);
+	
+
+	//write the the registers to the device	
+	LOG_DBG("SET LSM6DSL_REG_CTRL6_C bit  USR_OFF_W %i ", new_weight_flag);
+	if (data->hw_tf->update_reg(dev,
+				LSM6DSL_REG_CTRL6_C,
+				LSM6DSL_MASK_CTRL6_C_USR_OFF_W,
+				new_weight_flag << LSM6DSL_SHIFT_CTRL6_C_USR_OFF_W) < 0) {
+		LOG_DBG("failed to CTRL6_C_OSR_OFFSET bit USR_OFF_W");
+		return -EIO;
+	}
+	else{
+		 data->accel_offset_weight = new_weight_flag;
+	}
+
+	LOG_DBG("SET LSM6DSL_REG_X_OFS_USR %i ", new_weight_flag == true ? register_value_w1[0] : register_value_w0[0]);
+	if (drv_data->hw_tf->write_data(dev,
+			LSM6DSL_REG_X_OFS_USR,
+			new_weight_flag == true ? &register_value_w1[0] : &register_value_w0[0], 1) < 0) {
+		LOG_ERR("Could not Set LSM6DSL_REG_X_OFS_USR register");
+		return -EIO;
+	}
+	else{
+		data->accel_offset_x = current_offset_g[0];
+	}
+
+
+	LOG_DBG("SET LSM6DSL_REG_Y_OFS_USR %i ", new_weight_flag == true ? register_value_w1[1] : register_value_w0[1]);
+	if (drv_data->hw_tf->write_data(dev,
+			LSM6DSL_REG_Y_OFS_USR,
+			new_weight_flag == true ? &register_value_w1[1] : &register_value_w0[1], 1) < 0) {
+		LOG_ERR("Could not Set LSM6DSL_REG_Y_OFS_USR register");
+		return -EIO;
+	}
+	else{
+		data->accel_offset_y = current_offset_g[1];
+	}
+
+	LOG_DBG("SET LSM6DSL_REG_Z_OFS_USR %i ", new_weight_flag == true ? register_value_w1[2] : register_value_w0[2]);
+	if (drv_data->hw_tf->write_data(dev,
+			LSM6DSL_REG_Z_OFS_USR,
+			new_weight_flag == true ? &register_value_w1[2] : &register_value_w0[2], 1) < 0) {
+		LOG_ERR("Could not Set LSM6DSL_REG_Z_OFS_USR register");
+		return -EIO;
+	}
+	else{
+		data->accel_offset_z = current_offset_g[2];
+	}
+
+	return 0;
+};
+
 static int lsm6dsl_accel_config(const struct device *dev,
 				enum sensor_channel chan,
 				enum sensor_attribute attr,
@@ -259,6 +400,9 @@ static int lsm6dsl_accel_config(const struct device *dev,
 	case SENSOR_ATTR_UPPER_THRESH:
 		LOG_DBG("Setting SENSOR_ATTR_UPPER_THRESH");
 		return lsm6dsl_accel_set_upper_threshold_trigger(dev, val);
+	case SENSOR_ATTR_OFFSET:
+		LOG_DBG("Setting SENSOR_ATTR_OFFSET");
+		return lsm6dsl_accel_set_offset(dev, chan, val);
 #endif
 #ifdef LSM6DSL_ACCEL_ODR_RUNTIME
 	case SENSOR_ATTR_SAMPLING_FREQUENCY:
@@ -341,13 +485,18 @@ static int lsm6dsl_attr_set(const struct device *dev,
 			    const struct sensor_value *val)
 {
 	switch (chan) {
-	case SENSOR_CHAN_ACCEL_XYZ:
-		return lsm6dsl_accel_config(dev, chan, attr, val);
-	case SENSOR_CHAN_GYRO_XYZ:
-		return lsm6dsl_gyro_config(dev, chan, attr, val);
-	default:
-		LOG_WRN("attr_set() not supported on this channel.");
-		return -ENOTSUP;
+		case SENSOR_CHAN_ACCEL_XYZ:
+			return lsm6dsl_accel_config(dev, chan, attr, val);
+		case SENSOR_CHAN_ACCEL_X:
+		case SENSOR_CHAN_ACCEL_Y:
+		case SENSOR_CHAN_ACCEL_Z:
+			return lsm6dsl_accel_config(dev, chan, attr, val);
+
+		case SENSOR_CHAN_GYRO_XYZ:
+			return lsm6dsl_gyro_config(dev, chan, attr, val);
+		default:
+			LOG_WRN("attr_set() not supported on this channel.");
+			return -ENOTSUP;
 	}
 
 	return 0;

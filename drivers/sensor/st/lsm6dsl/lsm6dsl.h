@@ -649,11 +649,16 @@ struct lsm6dsl_data {
 	int accel_sample_y;
 	int accel_sample_z;
 	int accel_fs;  /*accelerometer full scale*/
+	float accel_offset_x; //in g
+	float accel_offset_y; //in g 
+	float accel_offset_z; //in g 
+	bool accel_offset_weight; 
 	float accel_sensitivity;
 	int gyro_sample_x;
 	int gyro_sample_y;
 	int gyro_sample_z;
 	float gyro_sensitivity;
+
 #if defined(CONFIG_LSM6DSL_ENABLE_TEMP)
 	int temp_sample;
 #endif

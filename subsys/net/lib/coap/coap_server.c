@@ -610,7 +610,7 @@ int coap_resource_parse_observe(struct coap_resource *resource, const struct coa
 		return -EINVAL;
 	}
 
-	ret = coap_get_option_int(request, COAP_OPTION_OBSERVE);
+	ret = coap_get_option_int(request, COAP_OPTION_OBSERVE);	
 	if (ret < 0) {
 		return ret;
 	}
@@ -621,13 +621,12 @@ int coap_resource_parse_observe(struct coap_resource *resource, const struct coa
 			service = svc;
 			break;
 		}
-	}
-
+	}	
 	if (service == NULL) {
 		return -ENOENT;
 	}
 
-	tkl = coap_header_get_token(request, token);
+	tkl = coap_header_get_token(request, token);	
 	if (tkl == 0) {
 		return -EINVAL;
 	}
@@ -639,7 +638,7 @@ int coap_resource_parse_observe(struct coap_resource *resource, const struct coa
 
 		/* RFC7641 section 4.1 - Check if the current observer already exists */
 		observer = coap_find_observer(service->data->observers, MAX_OBSERVERS, addr, token,
-					      tkl);
+					      tkl);		
 		if (observer != NULL) {
 			/* Client refresh */
 			goto unlock;
@@ -647,6 +646,7 @@ int coap_resource_parse_observe(struct coap_resource *resource, const struct coa
 
 		/* New client */
 		observer = coap_observer_next_unused(service->data->observers, MAX_OBSERVERS);
+		LOG_INF("New client CoAP observer %p", observer);
 		if (observer == NULL) {
 			ret = -ENOMEM;
 			goto unlock;
@@ -654,10 +654,13 @@ int coap_resource_parse_observe(struct coap_resource *resource, const struct coa
 
 		coap_observer_init(observer, request, addr);
 		coap_register_observer(resource, observer);
-	} else if (ret == 1) {
+	} else if (ret == 1) {		
 		ret = coap_service_remove_observer(service, resource, addr, token, tkl);
 		if (ret < 0) {
 			LOG_WRN("Failed to remove observer (%d)", ret);
+		}
+		else{
+			LOG_INF("CoAP observer unsubscribe OK");
 		}
 	}
 

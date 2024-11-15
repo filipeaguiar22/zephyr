@@ -96,7 +96,7 @@ int lsm6dsl_trigger_set(const struct device *dev,
 												register_value);
 								
 			
-			LOG_DBG("SET LSM6DSL_REG_WAKE_UP_THS 0x%x ", register_value);
+			
 			if (drv_data->hw_tf->write_data(dev,
 						LSM6DSL_REG_WAKE_UP_THS,
 						&register_value, 1) < 0) {
