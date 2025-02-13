@@ -49,7 +49,7 @@
 #define BOOTLOADER_STACK_OVERHEAD      0x0
 #define BOOTLOADER_DRAM_SEG_LEN        0x15000
 #define BOOTLOADER_IRAM_LOADER_SEG_LEN 0x1a00
-#define BOOTLOADER_IRAM_SEG_LEN        0xc000
+#define BOOTLOADER_IRAM_SEG_LEN        0xd000
 
 /* Base address used for calculating memory layout
  * counted from Dbus backwards and back to the Ibus
