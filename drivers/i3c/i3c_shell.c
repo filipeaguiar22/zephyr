@@ -82,6 +82,7 @@ struct i3c_ctrl {
 DT_FOREACH_STATUS_OKAY(cdns_i3c, I3C_CTRL_FN)
 DT_FOREACH_STATUS_OKAY(nuvoton_npcx_i3c, I3C_CTRL_FN)
 DT_FOREACH_STATUS_OKAY(nxp_mcux_i3c, I3C_CTRL_FN)
+DT_FOREACH_STATUS_OKAY(snps_designware_i3c, I3C_CTRL_FN)
 DT_FOREACH_STATUS_OKAY(st_stm32_i3c, I3C_CTRL_FN)
 /* zephyr-keep-sorted-stop */
 
@@ -97,6 +98,7 @@ const struct i3c_ctrl i3c_list[] = {
 	DT_FOREACH_STATUS_OKAY(cdns_i3c, I3C_CTRL_LIST_ENTRY)
 	DT_FOREACH_STATUS_OKAY(nuvoton_npcx_i3c, I3C_CTRL_LIST_ENTRY)
 	DT_FOREACH_STATUS_OKAY(nxp_mcux_i3c, I3C_CTRL_LIST_ENTRY)
+	DT_FOREACH_STATUS_OKAY(snps_designware_i3c, I3C_CTRL_LIST_ENTRY)
 	DT_FOREACH_STATUS_OKAY(st_stm32_i3c, I3C_CTRL_LIST_ENTRY)
 	/* zephyr-keep-sorted-stop */
 };
@@ -1428,7 +1430,7 @@ static int cmd_i3c_ccc_getstatus(const struct shell *sh, size_t argc, char **arg
 	if (argc > 3) {
 		fmt = GETSTATUS_FORMAT_2;
 		defbyte = strtol(argv[3], NULL, 16);
-		if (defbyte != GETSTATUS_FORMAT_2_TGTSTAT || defbyte != GETSTATUS_FORMAT_2_PRECR) {
+		if (defbyte != GETSTATUS_FORMAT_2_TGTSTAT && defbyte != GETSTATUS_FORMAT_2_PRECR) {
 			shell_error(sh, "Invalid defining byte.");
 			return -EINVAL;
 		}
@@ -2073,9 +2075,9 @@ static int cmd_i3c_ibi_tir(const struct shell *sh, size_t argc, char **argv)
 		return -ENODEV;
 	}
 
-	data_length = argc - 3;
+	data_length = argc - 2;
 	for (i = 0; i < data_length; i++) {
-		buf[i] = (uint8_t)strtol(argv[3 + i], NULL, 16);
+		buf[i] = (uint8_t)strtol(argv[2 + i], NULL, 16);
 	}
 
 	request.ibi_type = I3C_IBI_TARGET_INTR;

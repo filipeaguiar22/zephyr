@@ -6,7 +6,8 @@ tests:
     tags:
       - flash
       - shell
-    filter: CONFIG_FLASH_HAS_DRIVER_ENABLED
+    filter: CONFIG_FLASH_HAS_DRIVER_ENABLED and dt_chosen_enabled('zephyr,flash-controller')
+            and not CONFIG_SOC_SERIES_BSIM_NRFXX
     platform_exclude:
       - stm32h7s78_dk
       - gd32f350r_eval
