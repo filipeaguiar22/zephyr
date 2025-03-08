@@ -1269,21 +1269,25 @@ void net_if_ipv6_start_dad(struct net_if *iface,
 
 		ifaddr->dad_count = 1U;
 
-		if (!net_ipv6_start_dad(iface, ifaddr)) {
-			ifaddr->dad_start = k_uptime_get_32();
-			ifaddr->ifindex = net_if_get_by_iface(iface);
+		if (net_ipv6_start_dad(iface, ifaddr) != 0) {
+			NET_ERR("Interface %p failed to send DAD query for %s",
+				iface,
+				net_sprint_ipv6_addr(&ifaddr->address.in6_addr));
+		}
 
-			k_mutex_lock(&lock, K_FOREVER);
-			sys_slist_find_and_remove(&active_dad_timers,
-						  &ifaddr->dad_node);
-			sys_slist_append(&active_dad_timers, &ifaddr->dad_node);
-			k_mutex_unlock(&lock);
+		ifaddr->dad_start = k_uptime_get_32();
+		ifaddr->ifindex = net_if_get_by_iface(iface);
 
-			/* FUTURE: use schedule, not reschedule. */
-			if (!k_work_delayable_remaining_get(&dad_timer)) {
-				k_work_reschedule(&dad_timer,
-						  K_MSEC(DAD_TIMEOUT));
-			}
+		k_mutex_lock(&lock, K_FOREVER);
+		sys_slist_find_and_remove(&active_dad_timers,
+					  &ifaddr->dad_node);
+		sys_slist_append(&active_dad_timers, &ifaddr->dad_node);
+		k_mutex_unlock(&lock);
+
+		/* FUTURE: use schedule, not reschedule. */
+		if (!k_work_delayable_remaining_get(&dad_timer)) {
+			k_work_reschedule(&dad_timer,
+					  K_MSEC(DAD_TIMEOUT));
 		}
 	} else {
 		NET_DBG("Interface %p is down, starting DAD for %s later.",
@@ -1868,6 +1872,7 @@ static inline void net_if_addr_init(struct net_if_addr *ifaddr,
 				    uint32_t vlifetime)
 {
 	ifaddr->is_used = true;
+	ifaddr->is_added = true;
 	ifaddr->is_temporary = false;
 	ifaddr->address.family = AF_INET6;
 	ifaddr->addr_type = addr_type;
@@ -1906,6 +1911,17 @@ struct net_if_addr *net_if_ipv6_addr_add(struct net_if *iface,
 
 	ifaddr = ipv6_addr_find(iface, addr);
 	if (ifaddr) {
+		/* Address already exists, just return it but update ref count
+		 * if it was not updated. This could happen if the address was
+		 * added and then removed but for example an active connection
+		 * was still using it. In this case we must update the ref count
+		 * so that the address is not removed if the connection is closed.
+		 */
+		if (!ifaddr->is_added) {
+			atomic_inc(&ifaddr->atomic_ref);
+			ifaddr->is_added = true;
+		}
+
 		goto out;
 	}
 
@@ -1963,28 +1979,37 @@ out:
 
 bool net_if_ipv6_addr_rm(struct net_if *iface, const struct in6_addr *addr)
 {
+	struct net_if_addr *ifaddr;
 	struct net_if_ipv6 *ipv6;
+	bool result = true;
 	int ret;
 
 	NET_ASSERT(addr);
 
+	net_if_lock(iface);
+
 	ipv6 = iface->config.ip.ipv6;
 	if (!ipv6) {
-		return false;
+		result = false;
+		goto out;
 	}
 
-	ret = net_if_addr_unref(iface, AF_INET6, addr);
+	ret = net_if_addr_unref(iface, AF_INET6, addr, &ifaddr);
 	if (ret > 0) {
 		NET_DBG("Address %s still in use (ref %d)",
 			net_sprint_ipv6_addr(addr), ret);
-		return false;
-
+		result = false;
+		ifaddr->is_added = false;
+		goto out;
 	} else if (ret < 0) {
 		NET_DBG("Address %s not found (%d)",
 			net_sprint_ipv6_addr(addr), ret);
 	}
 
-	return true;
+out:
+	net_if_unlock(iface);
+
+	return result;
 }
 
 bool z_impl_net_if_ipv6_addr_add_by_index(int index,
@@ -4258,6 +4283,17 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
 	ifaddr = ipv4_addr_find(iface, addr);
 	if (ifaddr) {
 		/* TODO: should set addr_type/vlifetime */
+		/* Address already exists, just return it but update ref count
+		 * if it was not updated. This could happen if the address was
+		 * added and then removed but for example an active connection
+		 * was still using it. In this case we must update the ref count
+		 * so that the address is not removed if the connection is closed.
+		 */
+		if (!ifaddr->is_added) {
+			atomic_inc(&ifaddr->atomic_ref);
+			ifaddr->is_added = true;
+		}
+
 		goto out;
 	}
 
@@ -4280,6 +4316,7 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
 
 	if (ifaddr) {
 		ifaddr->is_used = true;
+		ifaddr->is_added = true;
 		ifaddr->address.family = AF_INET;
 		ifaddr->address.in_addr.s4_addr32[0] =
 						addr->s4_addr32[0];
@@ -4324,28 +4361,37 @@ out:
 
 bool net_if_ipv4_addr_rm(struct net_if *iface, const struct in_addr *addr)
 {
+	struct net_if_addr *ifaddr;
 	struct net_if_ipv4 *ipv4;
+	bool result = true;
 	int ret;
 
 	NET_ASSERT(addr);
 
+	net_if_lock(iface);
+
 	ipv4 = iface->config.ip.ipv4;
 	if (!ipv4) {
-		return false;
+		result = false;
+		goto out;
 	}
 
-	ret = net_if_addr_unref(iface, AF_INET, addr);
+	ret = net_if_addr_unref(iface, AF_INET, addr, &ifaddr);
 	if (ret > 0) {
 		NET_DBG("Address %s still in use (ref %d)",
 			net_sprint_ipv4_addr(addr), ret);
-		return false;
-
+		result = false;
+		ifaddr->is_added = false;
+		goto out;
 	} else if (ret < 0) {
 		NET_DBG("Address %s not found (%d)",
 			net_sprint_ipv4_addr(addr), ret);
 	}
 
-	return true;
+out:
+	net_if_unlock(iface);
+
+	return result;
 }
 
 bool z_impl_net_if_ipv4_addr_add_by_index(int index,
@@ -4843,8 +4889,13 @@ static void remove_ipv6_ifaddr(struct net_if *iface,
 #if defined(CONFIG_NET_IPV6_DAD)
 	if (!net_if_flag_is_set(iface, NET_IF_IPV6_NO_ND)) {
 		k_mutex_lock(&lock, K_FOREVER);
-		sys_slist_find_and_remove(&active_dad_timers,
-					  &ifaddr->dad_node);
+		if (sys_slist_find_and_remove(&active_dad_timers,
+					      &ifaddr->dad_node)) {
+			/* Addreess with active DAD timer would still have
+			 * stale entry in the neighbor cache.
+			 */
+			net_ipv6_nbr_rm(iface, &ifaddr->address.in6_addr);
+		}
 		k_mutex_unlock(&lock);
 	}
 #endif
@@ -4959,11 +5010,13 @@ struct net_if_addr *net_if_addr_ref(struct net_if *iface,
 int net_if_addr_unref_debug(struct net_if *iface,
 			    sa_family_t family,
 			    const void *addr,
+			    struct net_if_addr **ret_ifaddr,
 			    const char *caller, int line)
 #else
 int net_if_addr_unref(struct net_if *iface,
 		      sa_family_t family,
-		      const void *addr)
+		      const void *addr,
+		      struct net_if_addr **ret_ifaddr)
 #endif /* NET_LOG_LEVEL >= LOG_LEVEL_DBG */
 {
 	struct net_if_addr *ifaddr;
@@ -5017,6 +5070,10 @@ int net_if_addr_unref(struct net_if *iface,
 #endif
 
 	if (ref > 1) {
+		if (ret_ifaddr) {
+			*ret_ifaddr = ifaddr;
+		}
+
 		return ref - 1;
 	}
 
