@@ -16,7 +16,12 @@
 	#address-cells = <1>;
 	#size-cells = <1>;
 
+	aliases {
+		die-temp0 = &coretemp;
+	};
+
 	chosen {
+		zephyr,canbus = &twai0;
 		zephyr,entropy = &trng0;
 		zephyr,flash-controller = &flash;
 	};
@@ -151,6 +156,24 @@
 			status = "disabled";
 		};
 
+		twai0: can@6000b000 {
+			compatible = "espressif,esp32-twai";
+			reg = <0x6000B000 DT_SIZE_K(4)>;
+			interrupts = <TWAI0_INTR_SOURCE IRQ_DEFAULT_PRIORITY 0>;
+			interrupt-parent = <&intc>;
+			clocks = <&rtc ESP32_TWAI0_MODULE>;
+			status = "disabled";
+		};
+
+		twai1: can@6000d000 {
+			compatible = "espressif,esp32-twai";
+			reg = <0x6000D000 DT_SIZE_K(4)>;
+			interrupts = <TWAI1_INTR_SOURCE IRQ_DEFAULT_PRIORITY 0>;
+			interrupt-parent = <&intc>;
+			clocks = <&rtc ESP32_TWAI1_MODULE>;
+			status = "disabled";
+		};
+
 		spi2: spi@60081000 {
 			compatible = "espressif,esp32-spi";
 			reg = <0x60081000 DT_SIZE_K(4)>;
@@ -193,6 +216,13 @@
 				write-block-size = <4>;
 				/* Flash size is specified in SOC/SIP dtsi */
 			};
+		};
+
+		coretemp: coretemp@6000e058 {
+			compatible = "espressif,esp32-temp";
+			friendly-name = "coretemp";
+			reg = <0x6000E058 0x4>;
+			status = "disabled";
 		};
 
 		adc0: adc@6000e000 {
@@ -260,6 +290,13 @@
 			interrupts = <UART1_INTR_SOURCE IRQ_DEFAULT_PRIORITY 0>;
 			interrupt-parent = <&intc>;
 			clocks = <&rtc ESP32_UART1_MODULE>;
+			current-speed = <115200>;
+		};
+
+		lp_uart: uart@600b1400 {
+			compatible = "espressif,esp32-lpuart";
+			reg = <0x600b1400 DT_SIZE_K(4)>;
+			status = "disabled";
 			current-speed = <115200>;
 		};
 

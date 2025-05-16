@@ -12,36 +12,46 @@
  */
 
 #include <errno.h>
-#include <zephyr/autoconf.h>
-#include <zephyr/bluetooth/audio/bap.h>
-#include <zephyr/bluetooth/gap.h>
-#include <zephyr/types.h>
-#include <ctype.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/types.h>
+
+#include <zephyr/autoconf.h>
+#include <zephyr/bluetooth/addr.h>
+#include <zephyr/bluetooth/audio/bap.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/classic/rfcomm.h>
+#include <zephyr/bluetooth/classic/sdp.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/ead.h>
+#include <zephyr/bluetooth/gap.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/hci_types.h>
+#include <zephyr/bluetooth/iso.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/kernel.h>
+#include <zephyr/net_buf.h>
+#include <zephyr/settings/settings.h>
+#include <zephyr/shell/shell.h>
+#include <zephyr/shell/shell_string_conv.h>
+#include <zephyr/shell/shell_types.h>
+#include <zephyr/sys/__assert.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/util_macro.h>
-#include <zephyr/kernel.h>
-
-#include <zephyr/settings/settings.h>
-
-#include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/conn.h>
-#include <zephyr/bluetooth/classic/rfcomm.h>
-#include <zephyr/bluetooth/classic/sdp.h>
-#include <zephyr/bluetooth/iso.h>
-#include <zephyr/bluetooth/ead.h>
-
-#include <zephyr/shell/shell.h>
-#include "common/bt_shell_private.h"
+#include <zephyr/toolchain.h>
+#include <zephyr/types.h>
 
 #include "audio/shell/audio.h"
+#include "common/bt_shell_private.h"
+#if defined(CONFIG_BT_LL_SW_SPLIT)
 #include "controller/ll_sw/shell/ll.h"
+#endif /* CONFIG_BT_LL_SW_SPLIT */
 #include "host/shell/bt.h"
 #include "mesh/shell/hci.h"
 
@@ -988,8 +998,15 @@ void subrate_changed(struct bt_conn *conn,
 #endif
 
 #if defined(CONFIG_BT_CHANNEL_SOUNDING)
-void print_remote_cs_capabilities(struct bt_conn *conn, struct bt_conn_le_cs_capabilities *params)
+void print_remote_cs_capabilities(struct bt_conn *conn,
+				  uint8_t status,
+				  struct bt_conn_le_cs_capabilities *params)
 {
+	if (status != BT_HCI_ERR_SUCCESS) {
+		bt_shell_print("Read Remote CS Capabilities failed (HCI status 0x%02x)", status);
+		return;
+	}
+
 	bt_shell_print(
 		"Received remote channel sounding capabilities:\n"
 		"- Num CS configurations: %d\n"
@@ -1051,14 +1068,28 @@ void print_remote_cs_capabilities(struct bt_conn *conn, struct bt_conn_le_cs_cap
 		params->tx_snr_capability);
 }
 
-void print_remote_cs_fae_table(struct bt_conn *conn, struct bt_conn_le_cs_fae_table *params)
+void print_remote_cs_fae_table(struct bt_conn *conn,
+			       uint8_t status,
+			       struct bt_conn_le_cs_fae_table *params)
 {
+	if (status != BT_HCI_ERR_SUCCESS) {
+		bt_shell_print("Read Remote CS FAE Table failed (HCI status 0x%02x)", status);
+		return;
+	}
+
 	bt_shell_print("Received FAE Table: ");
 	bt_shell_hexdump(params->remote_fae_table, 72);
 }
 
-static void le_cs_config_created(struct bt_conn *conn, struct bt_conn_le_cs_config *config)
+static void le_cs_config_created(struct bt_conn *conn,
+				 uint8_t status,
+				 struct bt_conn_le_cs_config *config)
 {
+	if (status != BT_HCI_ERR_SUCCESS) {
+		bt_shell_print("Create CS Config failed (HCI status 0x%02x)", status);
+		return;
+	}
+
 	const char *mode_str[5] = {"Unused", "1 (RTT)", "2 (PBR)", "3 (RTT + PBR)", "Invalid"};
 	const char *role_str[3] = {"Initiator", "Reflector", "Invalid"};
 	const char *rtt_type_str[8] = {"AA only",        "32-bit sounding", "96-bit sounding",
@@ -1146,9 +1177,9 @@ static struct bt_conn_cb conn_callbacks = {
 	.subrate_changed = subrate_changed,
 #endif
 #if defined(CONFIG_BT_CHANNEL_SOUNDING)
-	.le_cs_remote_capabilities_available = print_remote_cs_capabilities,
-	.le_cs_remote_fae_table_available = print_remote_cs_fae_table,
-	.le_cs_config_created = le_cs_config_created,
+	.le_cs_read_remote_capabilities_complete = print_remote_cs_capabilities,
+	.le_cs_read_remote_fae_table_complete = print_remote_cs_fae_table,
+	.le_cs_config_complete = le_cs_config_created,
 	.le_cs_config_removed = le_cs_config_removed,
 #endif
 };
@@ -1500,7 +1531,7 @@ static int cmd_id_reset(const struct shell *sh, size_t argc, char *argv[])
 	int err;
 
 	if (argc < 2) {
-		shell_error(sh, "Identity identifier not specified");
+		shell_error(sh, "Identity handle not specified");
 		return -ENOEXEC;
 	}
 
@@ -1534,7 +1565,7 @@ static int cmd_id_delete(const struct shell *sh, size_t argc, char *argv[])
 	int err;
 
 	if (argc < 2) {
-		shell_error(sh, "Identity identifier not specified");
+		shell_error(sh, "Identity handle not specified");
 		return -ENOEXEC;
 	}
 
@@ -3774,13 +3805,8 @@ static int cmd_clear(const struct shell *sh, size_t argc, char *argv[])
 	}
 
 	if (argc < 3) {
-#if defined(CONFIG_BT_CLASSIC)
-		addr.type = BT_ADDR_LE_PUBLIC;
-		err = bt_addr_from_str(argv[1], &addr.a);
-#else
 		shell_print(sh, "Both address and address type needed");
 		return -ENOEXEC;
-#endif
 	} else {
 		err = bt_addr_le_from_str(argv[1], argv[2], &addr);
 	}
@@ -4217,6 +4243,16 @@ void bond_deleted(uint8_t id, const bt_addr_le_t *peer)
 	bt_shell_print("Bond deleted for %s, id %u", addr, id);
 }
 
+#if defined(CONFIG_BT_CLASSIC)
+static void br_bond_deleted(const bt_addr_t *peer)
+{
+	char addr[BT_ADDR_STR_LEN];
+
+	bt_addr_to_str(peer, addr, sizeof(addr));
+	bt_shell_print("Classic bond deleted for %s", addr);
+}
+#endif /* CONFIG_BT_CLASSIC */
+
 static struct bt_conn_auth_cb auth_cb_display = {
 	.passkey_display = auth_passkey_display,
 #if defined(CONFIG_BT_PASSKEY_KEYPRESS)
@@ -4317,6 +4353,9 @@ static struct bt_conn_auth_info_cb auth_info_cb = {
 	.pairing_failed = auth_pairing_failed,
 	.pairing_complete = auth_pairing_complete,
 	.bond_deleted = bond_deleted,
+#if defined(CONFIG_BT_CLASSIC)
+	.br_bond_deleted = br_bond_deleted,
+#endif /* CONFIG_BT_CLASSIC */
 };
 
 static int cmd_auth(const struct shell *sh, size_t argc, char *argv[])

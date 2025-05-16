@@ -21,6 +21,7 @@ LOG_MODULE_REGISTER(net_dhcpv4, CONFIG_NET_DHCPV4_LOG_LEVEL);
 #include <zephyr/net/net_pkt.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/hostname.h>
 #include "net_private.h"
 
 #include <zephyr/net/udp.h>
@@ -544,8 +545,6 @@ static uint32_t dhcpv4_send_request(struct net_if *iface)
 	struct net_pkt *pkt = NULL;
 	uint32_t timeout = UINT32_MAX;
 
-	iface->config.dhcpv4.xid++;
-
 	switch (iface->config.dhcpv4.state) {
 	case NET_DHCPV4_DISABLED:
 	case NET_DHCPV4_INIT:
@@ -978,6 +977,13 @@ static bool dhcpv4_parse_options(struct net_pkt *pkt,
 			goto end;
 		}
 
+		if (type == DHCPV4_OPTIONS_PAD) {
+			/* Pad option has a fixed 1-byte length and should be
+			 * ignored.
+			 */
+			continue;
+		}
+
 		if (net_pkt_read_u8(pkt, &length)) {
 			NET_ERR("option parsing, bad length");
 			return false;
@@ -1053,6 +1059,64 @@ static bool dhcpv4_parse_options(struct net_pkt *pkt,
 
 			break;
 		}
+
+#if defined(CONFIG_NET_DHCPV4_OPTION_PRINT_IGNORED)
+		case DHCPV4_OPTIONS_BROADCAST: {
+			struct in_addr bcast;
+
+			/* Broadcast address option may present 1 address */
+			if (length != 4) {
+				NET_ERR("options_broadcast, bad length");
+				return false;
+			}
+
+			if (net_pkt_read(pkt, bcast.s4_addr, 4)) {
+				NET_ERR("options_broadcast, short packet");
+				return false;
+			}
+
+			NET_DBG("options_broadcast: %s (ignored)",
+				net_sprint_ipv4_addr(&bcast));
+			break;
+		}
+		case DHCPV4_OPTIONS_HOST_NAME: {
+			char hostname[NET_HOSTNAME_SIZE] = { 0 };
+
+			if (length < 1) {
+				NET_ERR("options_host_name, bad length");
+				return false;
+			}
+
+			if (net_pkt_read(pkt, hostname, MIN(length,
+							    sizeof(hostname) - 1))) {
+				NET_ERR("options_host_name, short packet");
+				return false;
+			}
+
+			NET_DBG("options_host_name: %s (ignored%s)", hostname,
+				(length > sizeof(hostname) - 1) ? " and truncated" : "");
+			break;
+		}
+		case DHCPV4_OPTIONS_DOMAIN_NAME: {
+			char domain_name[NET_HOSTNAME_SIZE] = { 0 };
+
+			if (length < 1) {
+				NET_ERR("options_domain_name, bad length");
+				return false;
+			}
+
+			if (net_pkt_read(pkt, domain_name, MIN(length,
+							       sizeof(domain_name) - 1))) {
+				NET_ERR("options_domain_name, short packet");
+				return false;
+			}
+
+			NET_DBG("options_domain_name: %s (ignored%s)", domain_name,
+				(length > sizeof(domain_name) - 1) ? " and truncated" : "");
+			break;
+		}
+#endif /* CONFIG_NET_DHCPV4_OPTION_PRINT_IGNORED */
+
 #if defined(CONFIG_NET_DHCPV4_OPTION_DNS_ADDRESS)
 #define MAX_DNS_SERVERS CONFIG_DNS_RESOLVER_MAX_SERVERS
 		case DHCPV4_OPTIONS_DNS_SERVER: {
@@ -1141,9 +1205,11 @@ static bool dhcpv4_parse_options(struct net_pkt *pkt,
 			log_server.sin_family = AF_INET;
 			log_backend_net_set_ip((struct sockaddr *)&log_server);
 
-#ifdef CONFIG_LOG_BACKEND_NET_AUTOSTART
-			log_backend_net_start();
-#endif
+			if (IS_ENABLED(CONFIG_LOG_BACKEND_NET_AUTOSTART) &&
+			    !IS_ENABLED(CONFIG_NET_CONFIG_SETTINGS) &&
+			    !IS_ENABLED(CONFIG_LOG_BACKEND_NET_USE_CONNECTION_MANAGER)) {
+				log_backend_net_start();
+			}
 
 			NET_DBG("options_log_server: %s", net_sprint_ipv4_addr(&log_server));
 
@@ -1680,8 +1746,11 @@ const char *net_dhcpv4_msg_type_name(enum net_dhcpv4_msg_type msg_type)
 		"inform"
 	};
 
-	__ASSERT_NO_MSG(msg_type >= 1 && msg_type <= sizeof(name));
-	return name[msg_type - 1];
+	if (msg_type >= 1 && msg_type <= sizeof(name)) {
+		return name[msg_type - 1];
+	}
+
+	return "invalid";
 }
 
 static void dhcpv4_start_internal(struct net_if *iface, bool first_start)

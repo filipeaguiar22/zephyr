@@ -11,13 +11,6 @@ DA1469x ARM Cortex-M33 MCU family. The development kit consist of a motherboard
 with connectors and integrated debugger and an interchangeable daughterboard
 with an actual MCU (e.g. DA14695 or DA14699).
 
-.. figure:: da14695-00hqdevkt-board.jpg
-     :width: 442px
-     :align: center
-     :alt: DA14695 Development Kit Pro
-
-     DA14695 Development Kit Pro (Credit: Renesas Electronics Corporation)
-
 Hardware
 ********
 
@@ -56,6 +49,8 @@ The pin connections are as follows:
 
 Programming and Debugging
 *************************
+
+.. zephyr:board-supported-runners::
 
 Applications for the ``da1469x_dk_pro`` board configuration can be
 built, flashed, and debugged in the usual way. See

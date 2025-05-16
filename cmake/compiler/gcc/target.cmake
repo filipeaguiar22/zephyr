@@ -5,7 +5,6 @@ set_ifndef(C++ g++)
 # Configures CMake for using GCC, this script is re-used by several
 # GCC-based toolchains
 
-find_package(Deprecated COMPONENTS SPARSE)
 find_program(CMAKE_C_COMPILER ${CROSS_COMPILE}${CC} PATHS ${TOOLCHAIN_HOME} NO_DEFAULT_PATH)
 
 if(${CMAKE_C_COMPILER} STREQUAL CMAKE_C_COMPILER-NOTFOUND)
@@ -79,6 +78,8 @@ elseif("${ARCH}" STREQUAL "mips")
   include(${CMAKE_CURRENT_LIST_DIR}/target_mips.cmake)
 elseif("${ARCH}" STREQUAL "xtensa")
   include(${CMAKE_CURRENT_LIST_DIR}/target_xtensa.cmake)
+elseif("${ARCH}" STREQUAL "rx")
+  include(${CMAKE_CURRENT_LIST_DIR}/target_rx.cmake)
 endif()
 
 if(SYSROOT_DIR)

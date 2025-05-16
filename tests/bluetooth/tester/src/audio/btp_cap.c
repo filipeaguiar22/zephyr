@@ -173,11 +173,8 @@ static uint8_t btp_cap_supported_commands(const void *cmd, uint16_t cmd_len,
 {
 	struct btp_cap_read_supported_commands_rp *rp = rsp;
 
-	/* octet 0 */
-	tester_set_bit(rp->data, BTP_CAP_READ_SUPPORTED_COMMANDS);
-	tester_set_bit(rp->data, BTP_CAP_DISCOVER);
-
-	*rsp_len = sizeof(*rp) + 1;
+	*rsp_len = tester_supported_commands(BTP_SERVICE_ID_CAP, rp->data);
+	*rsp_len += sizeof(*rp);
 
 	return BTP_STATUS_SUCCESS;
 }
@@ -722,7 +719,7 @@ static uint8_t btp_cap_broadcast_source_setup(const void *cmd, uint16_t cmd_len,
 
 	rp->gap_settings = gap_settings;
 	sys_put_le24(source->broadcast_id, rp->broadcast_id);
-	*rsp_len = sizeof(*rp) + 1;
+	*rsp_len = sizeof(*rp);
 
 	return BTP_STATUS_SUCCESS;
 }
