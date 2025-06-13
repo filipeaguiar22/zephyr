@@ -2862,6 +2862,16 @@ struct net_if_ipv6_prefix *net_if_ipv6_prefix_get(struct net_if *iface,
 	}
 
 out:
+	if (prefix != NULL) {
+		NET_DBG("Found prefix %s/%d for %s",
+			net_sprint_ipv6_addr(&prefix->prefix),
+			prefix->len,
+			net_sprint_ipv6_addr(addr));
+	} else {
+		NET_DBG("No prefix found for %s",
+			net_sprint_ipv6_addr(addr));
+	}
+
 	net_if_unlock(iface);
 
 	return prefix;
@@ -3173,23 +3183,31 @@ static struct in6_addr *net_if_ipv6_get_best_match(struct net_if *iface,
 			len = prefix_len;
 		}
 
-		if (len >= *best_so_far) {
+		if (ipv6->unicast[i].addr_state == NET_ADDR_DEPRECATED &&
+		    addr_state == NET_ADDR_PREFERRED) {
+			/* We have a preferred address and a deprecated
+			 * address. We prefer always the preferred address
+			 * over the deprecated address.
+			 * See RFC 6724 chapter 5.
+			 */
+			NET_DBG("skipping deprecated address %s",
+				net_sprint_ipv6_addr(&ipv6->unicast[i].address.in6_addr));
+			continue;
+		}
+
+		if (len >= *best_so_far ||
+		    (ipv6->unicast[i].addr_state == NET_ADDR_PREFERRED &&
+		     addr_state == NET_ADDR_DEPRECATED)) {
+			/* Currently we have best deprecated address, but
+			 * should now choose the preferred address regardless
+			 * of the length.
+			 */
+
 			/* Mesh local address can only be selected for the same
 			 * subnet.
 			 */
 			if (ipv6->unicast[i].is_mesh_local && len < 64 &&
 			    !net_ipv6_is_addr_mcast_mesh(dst)) {
-				continue;
-			}
-
-			if (len == *best_so_far &&
-			    ipv6->unicast[i].addr_state == NET_ADDR_DEPRECATED &&
-			    addr_state == NET_ADDR_PREFERRED) {
-				/* We have a preferred address and a deprecated
-				 * address. We prefer the preferred address if the
-				 * prefix lengths are the same.
-				 * See RFC 6724 chapter 5.
-				 */
 				continue;
 			}
 
@@ -4384,6 +4402,11 @@ void net_if_ipv4_acd_failed(struct net_if *iface, struct net_if_addr *ifaddr)
 
 void net_if_ipv4_start_acd(struct net_if *iface, struct net_if_addr *ifaddr)
 {
+	if ((l2_flags_get(iface) & NET_L2_POINT_TO_POINT) ||
+	    net_ipv4_is_addr_loopback(&ifaddr->address.in_addr)) {
+		return;
+	}
+
 	ifaddr->addr_state = NET_ADDR_TENTATIVE;
 
 	if (net_if_is_up(iface)) {
@@ -4481,6 +4504,7 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
 	struct net_if_addr *ifaddr = NULL;
 	struct net_if_addr_ipv4 *cur;
 	struct net_if_ipv4 *ipv4;
+	bool do_acd = false;
 	int idx;
 
 	net_if_lock(iface);
@@ -4553,7 +4577,7 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
 		    !(l2_flags_get(iface) & NET_L2_POINT_TO_POINT) &&
 		    !net_ipv4_is_addr_loopback(addr)) {
 			/* ACD is started after the lock is released. */
-			;
+			do_acd = true;
 		} else {
 			ifaddr->addr_state = NET_ADDR_PREFERRED;
 		}
@@ -4566,7 +4590,9 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
 
 		net_if_unlock(iface);
 
-		net_if_ipv4_start_acd(iface, ifaddr);
+		if (do_acd) {
+			net_if_ipv4_start_acd(iface, ifaddr);
+		}
 
 		return ifaddr;
 	}
@@ -5277,6 +5303,15 @@ out:
 
 	return ifaddr;
 }
+
+/* This helper function is used only in tests. */
+#if defined(CONFIG_NET_TEST)
+struct net_if_addr *net_if_ipv6_get_ifaddr(struct net_if *iface,
+					   const void *addr)
+{
+	return get_ifaddr(iface, AF_INET6, addr, NULL);
+}
+#endif /* CONFIG_NET_TEST */
 
 static void remove_ipv6_ifaddr(struct net_if *iface,
 			       struct net_if_addr *ifaddr,

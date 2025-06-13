@@ -63,6 +63,7 @@
 	current-speed = <115200>;
 	pinctrl-0 = <&pinmux_flexcomm3_usart>;
 	pinctrl-names = "default";
+	wakeup-source;
 };
 
 &flexcomm0 {
@@ -234,6 +235,11 @@
 };
 
 &nbu {
+	status = "okay";
+	wakeup-source;
+};
+
+&imu {
 	status = "okay";
 	wakeup-source;
 };

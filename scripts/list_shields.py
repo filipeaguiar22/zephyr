@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,7 @@ class Shield:
     dir: Path
     full_name: str | None = None
     vendor: str | None = None
+    supported_features: list[str] | None = None
 
 def shield_key(shield):
     return shield.name
@@ -48,7 +50,8 @@ def process_shield_data(shield_data, shield_dir):
         name=shield_data['name'],
         dir=shield_dir,
         full_name=shield_data.get('full_name'),
-        vendor=shield_data.get('vendor')
+        vendor=shield_data.get('vendor'),
+        supported_features=shield_data.get('supported_features', []),
     )
 
 def find_shields(args):
@@ -63,6 +66,9 @@ def find_shields(args):
 def find_shields_in(root):
     shields = root / 'boards' / 'shields'
     ret = []
+
+    if not shields.exists():
+        return ret
 
     for maybe_shield in (shields).iterdir():
         if not maybe_shield.is_dir():
@@ -102,6 +108,7 @@ def find_shields_in(root):
 def parse_args():
     parser = argparse.ArgumentParser(allow_abbrev=False)
     add_args(parser)
+    add_args_formatting(parser)
     return parser.parse_args()
 
 def add_args(parser):
@@ -111,9 +118,19 @@ def add_args(parser):
                         type=Path, action='append',
                         help='add a board root, may be given more than once')
 
+def add_args_formatting(parser):
+    parser.add_argument("--json", action='store_true',
+                        help='''output list of shields in JSON format''')
+
 def dump_shields(shields):
-    for shield in shields:
-        print(f'  {shield.name}')
+    if args.json:
+        print(
+            json.dumps([{'dir': shield.dir.as_posix(), 'name': shield.name} for shield in shields])
+        )
+    else:
+        for shield in shields:
+            print(f'  {shield.name}')
 
 if __name__ == '__main__':
-    dump_shields(find_shields(parse_args()))
+    args = parse_args()
+    dump_shields(find_shields(args))
