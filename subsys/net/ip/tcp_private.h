@@ -6,6 +6,7 @@
  */
 
 #include "tp.h"
+#include <zephyr/toolchain/gcc.h>
 
 #define is(_a, _b) (strcmp((_a), (_b)) == 0)
 
@@ -13,13 +14,14 @@
 #define MIN3(_a, _b, _c) MIN((_a), MIN((_b), (_c)))
 #endif
 
-#define th_sport(_x) UNALIGNED_GET(&(_x)->th_sport)
-#define th_dport(_x) UNALIGNED_GET(&(_x)->th_dport)
-#define th_seq(_x) ntohl(UNALIGNED_GET(&(_x)->th_seq))
-#define th_ack(_x) ntohl(UNALIGNED_GET(&(_x)->th_ack))
+#define th_sport(_x) UNALIGNED_GET(UNALIGNED_MEMBER_ADDR((_x), th_sport))
+#define th_dport(_x) UNALIGNED_GET(UNALIGNED_MEMBER_ADDR((_x), th_dport))
+#define th_seq(_x) ntohl(UNALIGNED_GET(UNALIGNED_MEMBER_ADDR((_x), th_seq)))
+#define th_ack(_x) ntohl(UNALIGNED_GET(UNALIGNED_MEMBER_ADDR((_x), th_ack)))
+
 #define th_off(_x) ((_x)->th_off)
-#define th_flags(_x) UNALIGNED_GET(&(_x)->th_flags)
-#define th_win(_x) UNALIGNED_GET(&(_x)->th_win)
+#define th_flags(_x) UNALIGNED_GET(UNALIGNED_MEMBER_ADDR((_x), th_flags))
+#define th_win(_x) UNALIGNED_GET(UNALIGNED_MEMBER_ADDR((_x), th_win))
 
 #define tcp_slist(_conn, _slist, _op, _type, _link)			\
 ({									\
@@ -147,7 +149,7 @@
 	({                                                                     \
 		NET_DBG("conn: %p total=%zd, unacked_len=%d, "                 \
 			"send_win=%hu, mss=%hu",                               \
-			(_conn), net_pkt_get_len((_conn)->send_data),          \
+			(_conn), net_pkt_get_len(&(_conn)->send_data),         \
 			_conn->unacked_len, _conn->send_win,                   \
 			(uint16_t)conn_mss((_conn)));                          \
 		NET_DBG("conn: %p send_data_timer=%hu, send_data_retries=%hu", \
@@ -256,8 +258,8 @@ typedef void (*net_tcp_closed_cb_t)(struct tcp *conn, void *user_data);
 struct tcp { /* TCP connection */
 	sys_snode_t next;
 	struct net_context *context;
-	struct net_pkt *send_data;
-	struct net_pkt *queue_recv_data;
+	struct net_pkt send_data;
+	struct net_buf *queue_recv_data;
 	struct net_if *iface;
 	void *recv_user_data;
 	sys_slist_t send_queue;

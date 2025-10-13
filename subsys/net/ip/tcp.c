@@ -794,10 +794,15 @@ static void tcp_conn_release(struct k_work *work)
 	tcp_send_queue_flush(conn);
 
 	(void)k_work_cancel_delayable(&conn->send_data_timer);
-	tcp_pkt_unref(conn->send_data);
+	if (conn->send_data.frags != NULL) {
+		net_pkt_frag_unref(conn->send_data.frags);
+	}
 
 	if (CONFIG_NET_TCP_RECV_QUEUE_TIMEOUT) {
-		tcp_pkt_unref(conn->queue_recv_data);
+		if (conn->queue_recv_data != NULL) {
+			net_buf_unref(conn->queue_recv_data);
+			conn->queue_recv_data = NULL;
+		}
 	}
 
 	(void)k_work_cancel_delayable(&conn->timewait_timer);
@@ -1136,8 +1141,7 @@ static size_t tcp_check_pending_data(struct tcp *conn, struct net_pkt *pkt,
 {
 	size_t pending_len = 0;
 
-	if (CONFIG_NET_TCP_RECV_QUEUE_TIMEOUT &&
-	    !net_pkt_is_empty(conn->queue_recv_data)) {
+	if (CONFIG_NET_TCP_RECV_QUEUE_TIMEOUT && conn->queue_recv_data != NULL) {
 		/* Some potentential cases:
 		 * Note: MI = MAX_INT
 		 * Packet | Queued| End off   | Gap size | Required handling
@@ -1159,10 +1163,10 @@ static size_t tcp_check_pending_data(struct tcp *conn, struct net_pkt *pkt,
 		int32_t gap_size;
 		uint32_t end_offset;
 
-		pending_seq = tcp_get_seq(conn->queue_recv_data->buffer);
+		pending_seq = tcp_get_seq(conn->queue_recv_data);
 		end_offset = expected_seq - pending_seq;
 		gap_size = (int32_t)(pending_seq - th_seq(th) - ((uint32_t)len));
-		pending_len = net_pkt_get_len(conn->queue_recv_data);
+		pending_len = net_buf_frags_len(conn->queue_recv_data);
 		if (end_offset < pending_len) {
 			if (end_offset) {
 				net_pkt_remove_tail(pkt, end_offset);
@@ -1173,15 +1177,15 @@ static size_t tcp_check_pending_data(struct tcp *conn, struct net_pkt *pkt,
 				expected_seq, pending_len);
 
 			net_buf_frag_add(pkt->buffer,
-					 conn->queue_recv_data->buffer);
-			conn->queue_recv_data->buffer = NULL;
+					 conn->queue_recv_data);
+			conn->queue_recv_data = NULL;
 
 			k_work_cancel_delayable(&conn->recv_queue_timer);
 		} else {
 			/* Check if the queued data is just a section of the incoming data */
 			if (gap_size <= 0) {
-				net_buf_unref(conn->queue_recv_data->buffer);
-				conn->queue_recv_data->buffer = NULL;
+				net_buf_unref(conn->queue_recv_data);
+				conn->queue_recv_data = NULL;
 
 				k_work_cancel_delayable(&conn->recv_queue_timer);
 			}
@@ -1262,8 +1266,8 @@ static int tcp_header_add(struct tcp *conn, struct net_pkt *pkt, uint8_t flags,
 
 	memset(th, 0, sizeof(struct tcphdr));
 
-	UNALIGNED_PUT(conn->src.sin.sin_port, &th->th_sport);
-	UNALIGNED_PUT(conn->dst.sin.sin_port, &th->th_dport);
+	UNALIGNED_PUT(conn->src.sin.sin_port, UNALIGNED_MEMBER_ADDR(th, th_sport));
+	UNALIGNED_PUT(conn->dst.sin.sin_port, UNALIGNED_MEMBER_ADDR(th, th_dport));
 	th->th_off = 5;
 
 	if (conn->send_options.mss_found) {
@@ -1271,11 +1275,11 @@ static int tcp_header_add(struct tcp *conn, struct net_pkt *pkt, uint8_t flags,
 	}
 
 	UNALIGNED_PUT(flags, &th->th_flags);
-	UNALIGNED_PUT(htons(conn->recv_win), &th->th_win);
-	UNALIGNED_PUT(htonl(seq), &th->th_seq);
+	UNALIGNED_PUT(htons(conn->recv_win), UNALIGNED_MEMBER_ADDR(th, th_win));
+	UNALIGNED_PUT(htonl(seq), UNALIGNED_MEMBER_ADDR(th, th_seq));
 
 	if (ACK & flags) {
-		UNALIGNED_PUT(htonl(conn->ack), &th->th_ack);
+		UNALIGNED_PUT(htonl(conn->ack), UNALIGNED_MEMBER_ADDR(th, th_ack));
 	}
 
 	return net_pkt_set_data(pkt, &tcp_access);
@@ -1360,10 +1364,8 @@ static bool is_destination_local(struct net_pkt *pkt)
 	}
 
 	if (IS_ENABLED(CONFIG_NET_IPV6) && net_pkt_family(pkt) == AF_INET6) {
-		if (net_ipv6_is_addr_loopback(
-				(struct in6_addr *)NET_IPV6_HDR(pkt)->dst) ||
-		    net_ipv6_is_my_addr(
-				(struct in6_addr *)NET_IPV6_HDR(pkt)->dst)) {
+		if (net_ipv6_is_addr_loopback_raw(NET_IPV6_HDR(pkt)->dst) ||
+		    net_ipv6_is_my_addr_raw(NET_IPV6_HDR(pkt)->dst)) {
 			return true;
 		}
 	}
@@ -1396,9 +1398,12 @@ void net_tcp_reply_rst(struct net_pkt *pkt)
 				      (struct in_addr *)NET_IPV4_HDR(pkt)->dst,
 				      (struct in_addr *)NET_IPV4_HDR(pkt)->src);
 	} else if (IS_ENABLED(CONFIG_NET_IPV6) && net_pkt_family(pkt) == AF_INET6) {
-		ret =  net_ipv6_create(rst,
-				      (struct in6_addr *)NET_IPV6_HDR(pkt)->dst,
-				      (struct in6_addr *)NET_IPV6_HDR(pkt)->src);
+		struct in6_addr src, dst;
+
+		net_ipv6_addr_copy_raw(src.s6_addr, NET_IPV6_HDR(pkt)->src);
+		net_ipv6_addr_copy_raw(dst.s6_addr, NET_IPV6_HDR(pkt)->dst);
+
+		ret =  net_ipv6_create(rst, &dst, &src);
 	} else {
 		ret = -EINVAL;
 	}
@@ -1415,13 +1420,13 @@ void net_tcp_reply_rst(struct net_pkt *pkt)
 
 	memset(th_rst, 0, sizeof(struct tcphdr));
 
-	UNALIGNED_PUT(th_pkt->th_dport, &th_rst->th_sport);
-	UNALIGNED_PUT(th_pkt->th_sport, &th_rst->th_dport);
+	UNALIGNED_PUT(th_pkt->th_dport, UNALIGNED_MEMBER_ADDR(th_rst, th_sport));
+	UNALIGNED_PUT(th_pkt->th_sport, UNALIGNED_MEMBER_ADDR(th_rst, th_dport));
 	th_rst->th_off = 5;
 
 	if (th_flags(th_pkt) & ACK) {
 		UNALIGNED_PUT(RST, &th_rst->th_flags);
-		UNALIGNED_PUT(th_pkt->th_ack, &th_rst->th_seq);
+		UNALIGNED_PUT(th_pkt->th_ack, UNALIGNED_MEMBER_ADDR(th_rst, th_seq));
 	} else {
 		uint32_t ack = ntohl(th_pkt->th_seq) + tcp_data_len(pkt);
 
@@ -1430,7 +1435,7 @@ void net_tcp_reply_rst(struct net_pkt *pkt)
 		}
 
 		UNALIGNED_PUT(RST | ACK, &th_rst->th_flags);
-		UNALIGNED_PUT(htonl(ack), &th_rst->th_ack);
+		UNALIGNED_PUT(htonl(ack), UNALIGNED_MEMBER_ADDR(th_rst, th_ack));
 	}
 
 	ret = net_pkt_set_data(rst, &tcp_access_rst);
@@ -1683,7 +1688,7 @@ static int tcp_send_data(struct tcp *conn)
 		goto out;
 	}
 
-	ret = tcp_pkt_peek(pkt, conn->send_data, conn->unacked_len, len);
+	ret = tcp_pkt_peek(pkt, &conn->send_data, conn->unacked_len, len);
 	if (ret < 0) {
 		tcp_pkt_unref(pkt);
 		ret = -ENOBUFS;
@@ -1769,11 +1774,11 @@ static void tcp_cleanup_recv_queue(struct k_work *work)
 	k_mutex_lock(&conn->lock, K_FOREVER);
 
 	NET_DBG("Cleanup recv queue conn %p len %zd seq %u", conn,
-		net_pkt_get_len(conn->queue_recv_data),
-		tcp_get_seq(conn->queue_recv_data->buffer));
+		net_buf_frags_len(conn->queue_recv_data),
+		tcp_get_seq(conn->queue_recv_data));
 
-	net_buf_unref(conn->queue_recv_data->buffer);
-	conn->queue_recv_data->buffer = NULL;
+	net_buf_unref(conn->queue_recv_data);
+	conn->queue_recv_data = NULL;
 
 	k_mutex_unlock(&conn->lock);
 }
@@ -2020,21 +2025,7 @@ static struct tcp *tcp_conn_alloc(void)
 	}
 
 	memset(conn, 0, sizeof(*conn));
-
-	if (CONFIG_NET_TCP_RECV_QUEUE_TIMEOUT) {
-		conn->queue_recv_data = tcp_rx_pkt_alloc(conn, 0);
-		if (conn->queue_recv_data == NULL) {
-			NET_ERR("Cannot allocate %s queue for conn %p", "recv",
-				conn);
-			goto fail;
-		}
-	}
-
-	conn->send_data = tcp_pkt_alloc(conn, 0);
-	if (conn->send_data == NULL) {
-		NET_ERR("Cannot allocate %s queue for conn %p", "send", conn);
-		goto fail;
-	}
+	net_pkt_tx_init(&conn->send_data);
 
 	k_mutex_init(&conn->lock);
 	k_fifo_init(&conn->recv_data);
@@ -2086,15 +2077,6 @@ out:
 	NET_DBG("conn: %p", conn);
 
 	return conn;
-
-fail:
-	if (CONFIG_NET_TCP_RECV_QUEUE_TIMEOUT && conn->queue_recv_data) {
-		tcp_pkt_unref(conn->queue_recv_data);
-		conn->queue_recv_data = NULL;
-	}
-
-	k_mem_slab_free(&tcp_conns_slab, (void *)conn);
-	return NULL;
 }
 
 int net_tcp_get(struct net_context *context)
@@ -2544,7 +2526,7 @@ static void tcp_queue_recv_data(struct tcp *conn, struct net_pkt *pkt,
 		NET_DBG("Queuing data: conn %p", conn);
 	}
 
-	if (!net_pkt_is_empty(conn->queue_recv_data)) {
+	if (conn->queue_recv_data != NULL) {
 		/* Place the data to correct place in the list. If the data
 		 * would not be sequential, then drop this packet.
 		 *
@@ -2574,9 +2556,9 @@ static void tcp_queue_recv_data(struct tcp *conn, struct net_pkt *pkt,
 		uint32_t end_offset;
 		size_t pending_len;
 
-		pending_seq = tcp_get_seq(conn->queue_recv_data->buffer);
+		pending_seq = tcp_get_seq(conn->queue_recv_data);
 		end_offset = seq - pending_seq;
-		pending_len = net_pkt_get_len(conn->queue_recv_data);
+		pending_len = net_buf_frags_len(conn->queue_recv_data);
 		if (end_offset < pending_len) {
 			if (end_offset < len) {
 				if (end_offset) {
@@ -2585,16 +2567,16 @@ static void tcp_queue_recv_data(struct tcp *conn, struct net_pkt *pkt,
 
 				/* Put new data before the pending data */
 				net_buf_frag_add(pkt->buffer,
-						 conn->queue_recv_data->buffer);
+						 conn->queue_recv_data);
 				NET_DBG("Adding at before queue, end_offset %i, pending_len %zu",
 					end_offset, pending_len);
-				conn->queue_recv_data->buffer = pkt->buffer;
+				conn->queue_recv_data = pkt->buffer;
 				inserted = true;
 			}
 		} else {
 			struct net_buf *last;
 
-			last = net_buf_frag_last(conn->queue_recv_data->buffer);
+			last = net_buf_frag_last(conn->queue_recv_data);
 			pending_seq = tcp_get_seq(last);
 
 			start_offset = pending_seq - seq_start;
@@ -2606,20 +2588,20 @@ static void tcp_queue_recv_data(struct tcp *conn, struct net_pkt *pkt,
 				/* The queued data is irrelevant since the new packet overlaps the
 				 * new packet, take the new packet as contents
 				 */
-				net_buf_unref(conn->queue_recv_data->buffer);
-				conn->queue_recv_data->buffer = pkt->buffer;
+				net_buf_unref(conn->queue_recv_data);
+				conn->queue_recv_data = pkt->buffer;
 				inserted = true;
 			} else {
 				if (end_offset < len) {
 					if (end_offset) {
-						net_pkt_remove_tail(conn->queue_recv_data,
-								    end_offset);
+						net_buf_remove_mem(conn->queue_recv_data,
+								   end_offset);
 					}
 
 					/* Put new data after pending data */
 					NET_DBG("Adding at end of queue, start %i, end %i, len %zu",
 						start_offset, end_offset, len);
-					net_buf_frag_add(conn->queue_recv_data->buffer,
+					net_buf_frag_add(conn->queue_recv_data,
 							 pkt->buffer);
 					inserted = true;
 				}
@@ -2628,18 +2610,18 @@ static void tcp_queue_recv_data(struct tcp *conn, struct net_pkt *pkt,
 
 		if (inserted) {
 			NET_DBG("All pending data: conn %p", conn);
-			if (check_seq_list(conn->queue_recv_data->buffer) == false) {
+			if (check_seq_list(conn->queue_recv_data) == false) {
 				NET_ERR("Incorrect order in out of order sequence for conn %p",
 					conn);
 				/* error in sequence list, drop it */
-				net_buf_unref(conn->queue_recv_data->buffer);
-				conn->queue_recv_data->buffer = NULL;
+				net_buf_unref(conn->queue_recv_data);
+				conn->queue_recv_data = NULL;
 			}
 		} else {
 			NET_DBG("Cannot add new data to queue");
 		}
 	} else {
-		net_pkt_append_buffer(conn->queue_recv_data, pkt->buffer);
+		conn->queue_recv_data = pkt->buffer;
 		inserted = true;
 	}
 
@@ -2656,7 +2638,7 @@ static void tcp_queue_recv_data(struct tcp *conn, struct net_pkt *pkt,
 }
 
 static enum net_verdict tcp_data_received(struct tcp *conn, struct net_pkt *pkt,
-					  size_t *len, bool psh)
+					  size_t *len, bool psh, bool fin)
 {
 	enum net_verdict ret;
 
@@ -2668,6 +2650,13 @@ static enum net_verdict tcp_data_received(struct tcp *conn, struct net_pkt *pkt,
 
 	net_stats_update_tcp_seg_recv(conn->iface);
 	conn_ack(conn, *len);
+
+	/* In case FIN was received, don't send ACK just yet, FIN,ACK will be
+	 * sent instead.
+	 */
+	if (fin) {
+		return ret;
+	}
 
 	/* Delay ACK response in case of small window or missing PSH,
 	 * as described in RFC 813.
@@ -2804,7 +2793,9 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 		/* send ACK for non-RST packet */
 		if (FL(&fl, &, RST)) {
 			net_stats_update_tcp_seg_rsterr(net_pkt_iface(pkt));
-		} else if ((len > 0) || FL(&fl, &, FIN)) {
+		} else if ((len > 0) || FL(&fl, &, FIN) ||
+			   /* Keep-alive probe */
+			   ((len == 0) && FL(&fl, &, ACK))) {
 			tcp_out(conn, ACK);
 		}
 		k_mutex_unlock(&conn->lock);
@@ -2863,6 +2854,42 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 		goto out;
 	}
 
+	/* Now validate the ACK flag and ACKnum */
+	if ((conn->state != TCP_LISTEN) && (conn->state != TCP_SYN_SENT)) {
+		uint32_t snduna = conn->seq;
+
+		/* According to RFC 793 ch 3.9 Event Processing,
+		 * drop any received segment if the ACK bit is off.
+		 */
+		if (!FL(&fl, &, ACK)) {
+			net_stats_update_tcp_seg_ackerr(net_pkt_iface(pkt));
+			net_stats_update_tcp_seg_drop(net_pkt_iface(pkt));
+			k_mutex_unlock(&conn->lock);
+			return NET_DROP;
+		}
+
+		/* Accroding to RFC 793, the ACKnum is acceptable if in scope
+		 * SND.UNA =< SEG.ACK =< SND.NXT
+		 * Otherwise, drop the packet and send an ACK back.
+		 */
+
+		if ((conn->state == TCP_SYN_RECEIVED) || (conn->state == TCP_FIN_WAIT_1) ||
+		    (conn->state == TCP_CLOSING) || (conn->state == TCP_LAST_ACK)) {
+			/* SYN or FIN sent, so the snduna should be conn->seq - 1 */
+			snduna -= 1;
+		}
+
+		if (net_tcp_seq_cmp(th_ack(th), snduna) < 0 ||
+		    net_tcp_seq_cmp(th_ack(th), conn->seq + conn->send_data_total) > 0) {
+			net_stats_update_tcp_seg_ackerr(net_pkt_iface(pkt));
+			net_stats_update_tcp_seg_drop(net_pkt_iface(pkt));
+			tcp_out(conn, ACK);
+			k_mutex_unlock(&conn->lock);
+			return NET_DROP;
+		}
+	}
+
+	/* Both the seqnum and the acknum are valid, then do processing. */
 	conn->send_win = ntohs(th_win(th));
 	if (conn->send_win > conn->send_win_max) {
 		NET_DBG("Lowering send window from %u to %u", conn->send_win, conn->send_win_max);
@@ -2910,8 +2937,7 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 		}
 		break;
 	case TCP_SYN_RECEIVED:
-		if (FL(&fl, &, ACK, th_ack(th) == conn->seq &&
-				th_seq(th) == conn->ack)) {
+		if (th_ack(th) == conn->seq && th_seq(th) == conn->ack) {
 			net_tcp_accept_cb_t accept_cb = NULL;
 			struct net_context *context = NULL;
 
@@ -2941,7 +2967,7 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 				break;
 			}
 
-			net_ipaddr_copy(&conn->context->remote, &conn->dst.sa);
+			memcpy(&conn->context->remote, &conn->dst.sa, sizeof(conn->dst.sa));
 
 			/* Check if v4-mapping-to-v6 needs to be done for
 			 * the accepted socket.
@@ -3042,37 +3068,8 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 		}
 
 		break;
-	case TCP_ESTABLISHED:
-		/* full-close */
-		if (FL(&fl, &, FIN, th_seq(th) == conn->ack)) {
-			if (len) {
-				verdict = tcp_data_get(conn, pkt, &len);
-				if (verdict == NET_OK) {
-					/* net_pkt owned by the recv fifo now */
-					pkt = NULL;
-				}
-			} else {
-				verdict = NET_OK;
-			}
-
-			conn_ack(conn, + len + 1);
-			keep_alive_timer_stop(conn);
-
-			if (FL(&fl, &, ACK) && (net_tcp_seq_cmp(th_ack(th), conn->seq) > 0)) {
-				uint32_t len_acked = th_ack(th) - conn->seq;
-
-				conn_seq(conn, + len_acked);
-			}
-
-			tcp_out(conn, FIN | ACK);
-			conn_seq(conn, + 1);
-			tcp_setup_retransmission(conn);
-
-			tcp_setup_last_ack_timer(conn);
-			next = TCP_LAST_ACK;
-
-			break;
-		}
+	case TCP_ESTABLISHED: {
+		bool fin = FL(&fl, &, FIN, th_seq(th) == conn->ack);
 
 		/* Whatever we've received, we know that peer is alive, so reset
 		 * the keepalive timer.
@@ -3127,7 +3124,7 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 			NET_DBG("conn: %p len_acked=%u", conn, len_acked);
 
 			if ((conn->send_data_total < len_acked) ||
-					(tcp_pkt_pull(conn->send_data,
+					(tcp_pkt_pull(&conn->send_data,
 						      len_acked) < 0)) {
 				NET_ERR("conn: %p, Invalid len_acked=%u "
 					"(total=%zu)", conn, len_acked,
@@ -3178,11 +3175,21 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 
 			/* We are closing the connection, send a FIN to peer */
 			if (conn->in_close && conn->send_data_total == 0) {
-				next = TCP_FIN_WAIT_1;
-
-				k_work_reschedule_for_queue(&tcp_work_q,
-							    &conn->fin_timer,
-							    FIN_TIMEOUT);
+				if (fin) {
+					/* If FIN was also present in the processed
+					 * packet, acknowledge that and jump directly
+					 * to TCP_LAST_ACK.
+					 */
+					conn_ack(conn, + 1);
+					next = TCP_LAST_ACK;
+					tcp_setup_last_ack_timer(conn);
+				} else {
+					/* Otherwise, wait for FIN in TCP_FIN_WAIT_1 */
+					next = TCP_FIN_WAIT_1;
+					k_work_reschedule_for_queue(&tcp_work_q,
+								    &conn->fin_timer,
+								    FIN_TIMEOUT);
+				}
 
 				tcp_out(conn, FIN | ACK);
 				conn_seq(conn, + 1);
@@ -3210,7 +3217,7 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 			if (len > 0) {
 				bool psh = FL(&fl, &, PSH);
 
-				verdict = tcp_data_received(conn, pkt, &len, psh);
+				verdict = tcp_data_received(conn, pkt, &len, psh, fin);
 				if (verdict == NET_OK) {
 					/* net_pkt owned by the recv fifo now */
 					pkt = NULL;
@@ -3253,12 +3260,24 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 			k_sem_give(&conn->tx_sem);
 		}
 
+		/* Finally, after all Data/ACK processing, check for FIN flag. */
+		if (fin) {
+			keep_alive_timer_stop(conn);
+			conn_ack(conn, + 1);
+			tcp_out(conn, FIN | ACK);
+			conn_seq(conn, + 1);
+			tcp_setup_retransmission(conn);
+			tcp_setup_last_ack_timer(conn);
+			next = TCP_LAST_ACK;
+		}
+
 		break;
+	}
 	case TCP_CLOSE_WAIT:
 		/* Half-close is not supported, so do nothing here */
 		break;
 	case TCP_LAST_ACK:
-		if (FL(&fl, ==, ACK, th_ack(th) == conn->seq)) {
+		if (th_ack(th) == conn->seq) {
 			k_work_cancel_delayable(&conn->send_data_timer);
 			do_close = true;
 			verdict = NET_OK;
@@ -3295,7 +3314,7 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 			net_tcp_reply_rst(pkt);
 			break;
 		}
-		if (FL(&fl, &, ACK, th_ack(th) == conn->seq)) {
+		if (th_ack(th) == conn->seq) {
 			NET_DBG("conn %p: FIN acknowledged, going to FIN_WAIT_2 "
 				"state seq %u, ack %u",
 				conn, conn->seq, conn->ack);
@@ -3391,7 +3410,7 @@ static enum net_verdict tcp_in(struct tcp *conn, struct net_pkt *pkt)
 			break;
 		}
 
-		if (FL(&fl, &, ACK, th_ack(th) == conn->seq)) {
+		if (th_ack(th) == conn->seq) {
 			NET_DBG("conn %p: FIN acknowledged, going to TIME WAIT "
 				"state seq %u, ack %u",
 				conn, conn->seq, conn->ack);
@@ -3616,7 +3635,7 @@ int net_tcp_queue(struct net_context *context, const void *data, size_t len,
 		for (int i = 0; i < msg->msg_iovlen; i++) {
 			int iovlen = MIN(msg->msg_iov[i].iov_len, len);
 
-			ret = tcp_pkt_append(conn->send_data,
+			ret = tcp_pkt_append(&conn->send_data,
 					     msg->msg_iov[i].iov_base,
 					     iovlen);
 			if (ret < 0) {
@@ -3635,7 +3654,7 @@ int net_tcp_queue(struct net_context *context, const void *data, size_t len,
 			}
 		}
 	} else {
-		ret = tcp_pkt_append(conn->send_data, data, len);
+		ret = tcp_pkt_append(&conn->send_data, data, len);
 		if (ret < 0) {
 			goto out;
 		}

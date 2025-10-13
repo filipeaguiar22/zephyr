@@ -542,6 +542,14 @@ static void spi_stm32_complete(const struct device *dev, int status)
 
 	if (!(data->ctx.config->operation & SPI_HOLD_ON_CS)) {
 		ll_func_disable_spi(spi);
+#if defined(CONFIG_SPI_STM32_INTERRUPT) && defined(CONFIG_SOC_SERIES_STM32H7X)
+	} else {
+		/* On H7, with SPI still enabled, the ISR is always called, even if the interrupt
+		 * enable register is cleared.
+		 * As a workaround, disable the IRQ at NVIC level.
+		 */
+		irq_disable(cfg->irq_line);
+#endif /* CONFIG_SPI_STM32_INTERRUPT && CONFIG_SOC_SERIES_STM32H7X */
 	}
 
 #ifdef CONFIG_SPI_STM32_INTERRUPT
@@ -961,6 +969,10 @@ static int transceive(const struct device *dev,
 
 #endif /* DT_HAS_COMPAT_STATUS_OKAY(st_stm32h7_spi) */
 
+#if defined(CONFIG_SPI_STM32_INTERRUPT) && defined(CONFIG_SOC_SERIES_STM32H7X)
+	/* Make sure IRQ is disabled to avoid any spurious IRQ to happen */
+	irq_disable(cfg->irq_line);
+#endif  /* CONFIG_SPI_STM32_INTERRUPT && CONFIG_SOC_SERIES_STM32H7X */
 	LL_SPI_Enable(spi);
 
 #if DT_HAS_COMPAT_STATUS_OKAY(st_stm32h7_spi)
@@ -1003,6 +1015,10 @@ static int transceive(const struct device *dev,
 	}
 
 	ll_func_enable_int_tx_empty(spi);
+
+#if defined(CONFIG_SPI_STM32_INTERRUPT) && defined(CONFIG_SOC_SERIES_STM32H7X)
+	irq_enable(cfg->irq_line);
+#endif  /* CONFIG_SPI_STM32_INTERRUPT && CONFIG_SOC_SERIES_STM32H7X */
 
 	do {
 		ret = spi_context_wait_for_completion(&data->ctx);
@@ -1122,7 +1138,7 @@ static int transceive_dma(const struct device *dev,
 	if ((tx_bufs != NULL && !spi_buf_set_in_nocache(tx_bufs)) ||
 		(rx_bufs != NULL && !spi_buf_set_in_nocache(rx_bufs))) {
 		LOG_ERR("SPI DMA transfers not supported on cached memory");
-		return -EFAULT;
+		return -ENOTSUP;
 	}
 #endif /* CONFIG_DCACHE */
 
@@ -1185,6 +1201,13 @@ static int transceive_dma(const struct device *dev,
 
 	/* This is turned off in spi_stm32_complete(). */
 	spi_stm32_cs_control(dev, true);
+
+	uint8_t word_size_bytes = bits2bytes(SPI_WORD_SIZE_GET(config->operation));
+
+	data->dma_rx.dma_cfg.source_data_size = word_size_bytes;
+	data->dma_rx.dma_cfg.dest_data_size = word_size_bytes;
+	data->dma_tx.dma_cfg.source_data_size = word_size_bytes;
+	data->dma_tx.dma_cfg.dest_data_size = word_size_bytes;
 
 	while (data->ctx.rx_len > 0 || data->ctx.tx_len > 0) {
 		size_t dma_len;
@@ -1510,7 +1533,9 @@ static int spi_stm32_pm_action(const struct device *dev,
 #define STM32_SPI_IRQ_HANDLER_DECL(id)					\
 	static void spi_stm32_irq_config_func_##id(const struct device *dev)
 #define STM32_SPI_IRQ_HANDLER_FUNC(id)					\
-	.irq_config = spi_stm32_irq_config_func_##id,
+	.irq_config = spi_stm32_irq_config_func_##id,			\
+	IF_ENABLED(CONFIG_SOC_SERIES_STM32H7X,				\
+	(.irq_line = DT_INST_IRQN(id),))
 #define STM32_SPI_IRQ_HANDLER(id)					\
 static void spi_stm32_irq_config_func_##id(const struct device *dev)		\
 {									\

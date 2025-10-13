@@ -381,8 +381,6 @@ static int xilinx_axienet_get_config(const struct device *dev, enum ethernet_con
 {
 	const struct xilinx_axienet_config *dev_config = dev->config;
 	const struct xilinx_axienet_data *data = dev->data;
-	struct phy_link_state link_state;
-	int err;
 
 	switch (type) {
 	case ETHERNET_CONFIG_TYPE_RX_CHECKSUM_SUPPORT:
@@ -529,8 +527,8 @@ static int xilinx_axienet_probe(const struct device *dev)
 				      XILINX_AXIENET_RECEIVER_CONFIGURATION_FLOW_CONTROL_EN_MASK);
 
 	/* at time of writing, hardware does not support half duplex */
-	err = phy_configure_link(config->phy, LINK_FULL_10BASE | LINK_FULL_100BASE |
-						      LINK_FULL_1000BASE);
+	err = phy_configure_link(config->phy,
+				 LINK_FULL_10BASE | LINK_FULL_100BASE | LINK_FULL_1000BASE, 0);
 	if (err) {
 		LOG_WRN("Could not configure PHY: %d", -err);
 	}
@@ -586,7 +584,7 @@ static const struct ethernet_api xilinx_axienet_api = {
 	}                                                                                          \
                                                                                                    \
 	static struct xilinx_axienet_data data_##inst = {                                          \
-		.mac_addr = DT_INST_PROP(inst, local_mac_address),                                 \
+		.mac_addr = DT_INST_PROP_OR(inst, local_mac_address, {0}),                         \
 		.dma_is_configured_rx = false,                                                     \
 		.dma_is_configured_tx = false};                                                    \
 	static const struct xilinx_axienet_config config_##inst = {                                \

@@ -101,7 +101,9 @@ static const char server_key_test[] = {
 				NET_EVENT_WIFI_AP_ENABLE_RESULT   |\
 				NET_EVENT_WIFI_AP_DISABLE_RESULT  |\
 				NET_EVENT_WIFI_AP_STA_CONNECTED   |\
-				NET_EVENT_WIFI_AP_STA_DISCONNECTED)
+				NET_EVENT_WIFI_AP_STA_DISCONNECTED|\
+				NET_EVENT_WIFI_SIGNAL_CHANGE      |\
+				NET_EVENT_WIFI_NEIGHBOR_REP_COMP)
 
 #ifdef CONFIG_WIFI_MGMT_RAW_SCAN_RESULTS_ONLY
 #define WIFI_SHELL_SCAN_EVENTS (                   \
@@ -798,7 +800,7 @@ static void handle_wifi_neighbor_rep_complete(struct net_mgmt_event_callback *cb
 #endif
 
 static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
-				    uint32_t mgmt_event, struct net_if *iface)
+				    uint64_t mgmt_event, struct net_if *iface)
 {
 	switch (mgmt_event) {
 	case NET_EVENT_WIFI_CONNECT_RESULT:
@@ -836,7 +838,7 @@ static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
 }
 
 static void wifi_mgmt_scan_event_handler(struct net_mgmt_event_callback *cb,
-				    uint32_t mgmt_event, struct net_if *iface)
+					 uint64_t mgmt_event, struct net_if *iface)
 {
 	switch (mgmt_event) {
 	case NET_EVENT_WIFI_SCAN_RESULT:
@@ -3886,7 +3888,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 		  "<rts_threshold: rts threshold/off>.\n"
 		  "[-i, --iface=<interface index>] : Interface index.\n",
 		  cmd_wifi_ap_set_rts_threshold,
-		  3,
+		  2,
 		  2),
 	SHELL_SUBCMD_SET_END);
 
@@ -4090,7 +4092,7 @@ SHELL_SUBCMD_ADD((wifi), connect, NULL,
 		 "[-c --channel]: Channel that needs to be scanned for connection. "
 		 "0:any channel.\n"
 		 "[-b, --band] 0: any band (2:2.4GHz, 5:5GHz, 6:6GHz]\n"
-		 "[-p, --psk]: Passphrase (valid only for secure SSIDs)\n"
+		 "[-p, --passphrase]: Passphrase (valid only for secure SSIDs)\n"
 		 "[-k, --key-mgmt]: Key Management type (valid only for secure SSIDs)\n"
 		 "0:None, 1:WPA2-PSK, 2:WPA2-PSK-256, 3:SAE-HNP, 4:SAE-H2E, 5:SAE-AUTO, 6:WAPI,"
 		 "7:EAP-TLS, 8:WEP, 9: WPA-PSK, 10: WPA-Auto-Personal, 11: DPP\n"

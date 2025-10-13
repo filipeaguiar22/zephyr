@@ -159,11 +159,17 @@ zephyr_compile_options($<$<COMPILE_LANGUAGE:C>:$<TARGET_PROPERTY:compiler,no_str
 zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler-cpp,no_strict_aliasing>>)
 
 # Extra warnings options for twister run
-if (CONFIG_COMPILER_WARNINGS_AS_ERRORS)
+if(CONFIG_COMPILER_WARNINGS_AS_ERRORS)
   zephyr_compile_options($<$<COMPILE_LANGUAGE:C>:$<TARGET_PROPERTY:compiler,warnings_as_errors>>)
   zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler,warnings_as_errors>>)
   zephyr_compile_options($<$<COMPILE_LANGUAGE:ASM>:$<TARGET_PROPERTY:asm,warnings_as_errors>>)
   zephyr_link_libraries($<TARGET_PROPERTY:linker,warnings_as_errors>)
+endif()
+
+if(CONFIG_DEPRECATION_TEST)
+  zephyr_compile_options($<$<COMPILE_LANGUAGE:C>:$<TARGET_PROPERTY:compiler,no_deprecation_warning>>)
+  zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler,no_deprecation_warning>>)
+  zephyr_compile_options($<$<COMPILE_LANGUAGE:ASM>:$<TARGET_PROPERTY:asm,no_deprecation_warning>>)
 endif()
 
 # @Intent: Set compiler flags to enable buffer overflow checks in libc functions
@@ -208,24 +214,53 @@ endif()
 #    1) Using EXTRA_CFLAGS which is applied regardless of kconfig choice, or
 #    2) Rely on override support being implemented by your toolchain_cc_optimize_*()
 #
-get_property(OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG TARGET compiler PROPERTY no_optimization)
-get_property(OPTIMIZE_FOR_DEBUG_FLAG TARGET compiler PROPERTY optimization_debug)
-get_property(OPTIMIZE_FOR_SPEED_FLAG TARGET compiler PROPERTY optimization_speed)
-get_property(OPTIMIZE_FOR_SIZE_FLAG  TARGET compiler PROPERTY optimization_size)
-get_property(OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG TARGET compiler PROPERTY optimization_size_aggressive)
+get_property(COMPILER_OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG TARGET compiler PROPERTY no_optimization)
+get_property(COMPILER_OPTIMIZE_FOR_DEBUG_FLAG TARGET compiler PROPERTY optimization_debug)
+get_property(COMPILER_OPTIMIZE_FOR_SPEED_FLAG TARGET compiler PROPERTY optimization_speed)
+get_property(COMPILER_OPTIMIZE_FOR_SIZE_FLAG  TARGET compiler PROPERTY optimization_size)
+get_property(COMPILER_OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG TARGET compiler PROPERTY optimization_size_aggressive)
+
+get_property(ASM_OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG TARGET asm PROPERTY no_optimization)
+get_property(ASM_OPTIMIZE_FOR_DEBUG_FLAG TARGET asm PROPERTY optimization_debug)
+get_property(ASM_OPTIMIZE_FOR_SPEED_FLAG TARGET asm PROPERTY optimization_speed)
+get_property(ASM_OPTIMIZE_FOR_SIZE_FLAG  TARGET asm PROPERTY optimization_size)
+get_property(ASM_OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG TARGET asm PROPERTY optimization_size_aggressive)
+
+# Let the assembler inherit the optimization flags of the compiler if it is
+# not set explicitly.
+if(NOT ASM_OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG)
+  set(ASM_OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG ${COMPILER_OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG})
+endif()
+if(NOT ASM_OPTIMIZE_FOR_DEBUG_FLAG)
+  set(ASM_OPTIMIZE_FOR_DEBUG_FLAG ${COMPILER_OPTIMIZE_FOR_DEBUG_FLAG})
+endif()
+if(NOT ASM_OPTIMIZE_FOR_SPEED_FLAG)
+  set(ASM_OPTIMIZE_FOR_SPEED_FLAG ${COMPILER_OPTIMIZE_FOR_SPEED_FLAG})
+endif()
+if(NOT ASM_OPTIMIZE_FOR_SIZE_FLAG)
+  set(ASM_OPTIMIZE_FOR_SIZE_FLAG ${COMPILER_OPTIMIZE_FOR_SIZE_FLAG})
+endif()
+if(NOT ASM_OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG)
+  set(ASM_OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG ${COMPILER_OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG})
+endif()
 
 # From kconfig choice, pick the actual OPTIMIZATION_FLAG to use.
 # Kconfig choice ensures only one of these CONFIG_*_OPTIMIZATIONS is set.
 if(CONFIG_NO_OPTIMIZATIONS)
-  set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG})
+  set(COMPILER_OPTIMIZATION_FLAG ${COMPILER_OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG})
+  set(ASM_OPTIMIZATION_FLAG ${ASM_OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG})
 elseif(CONFIG_DEBUG_OPTIMIZATIONS)
-  set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_DEBUG_FLAG})
+  set(COMPILER_OPTIMIZATION_FLAG ${COMPILER_OPTIMIZE_FOR_DEBUG_FLAG})
+  set(ASM_OPTIMIZATION_FLAG ${ASM_OPTIMIZE_FOR_DEBUG_FLAG})
 elseif(CONFIG_SPEED_OPTIMIZATIONS)
-  set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_SPEED_FLAG})
+  set(COMPILER_OPTIMIZATION_FLAG ${COMPILER_OPTIMIZE_FOR_SPEED_FLAG})
+  set(ASM_OPTIMIZATION_FLAG ${ASM_OPTIMIZE_FOR_SPEED_FLAG})
 elseif(CONFIG_SIZE_OPTIMIZATIONS)
-  set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_SIZE_FLAG}) # Default in kconfig
+  set(COMPILER_OPTIMIZATION_FLAG ${COMPILER_OPTIMIZE_FOR_SIZE_FLAG}) # Default in kconfig
+  set(ASM_OPTIMIZATION_FLAG ${ASM_OPTIMIZE_FOR_SIZE_FLAG})
 elseif(CONFIG_SIZE_OPTIMIZATIONS_AGGRESSIVE)
-  set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG})
+  set(COMPILER_OPTIMIZATION_FLAG ${COMPILER_OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG})
+  set(ASM_OPTIMIZATION_FLAG ${ASM_OPTIMIZE_FOR_SIZE_AGGRESSIVE_FLAG})
 else()
   message(FATAL_ERROR
     "Unreachable code. Expected optimization level to have been chosen. See Kconfig.zephyr")
@@ -239,8 +274,9 @@ SOC_* symbol.")
 endif()
 
 # Apply the final optimization flag(s)
-zephyr_compile_options($<$<COMPILE_LANGUAGE:C>:${OPTIMIZATION_FLAG}>)
-zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:${OPTIMIZATION_FLAG}>)
+zephyr_compile_options($<$<COMPILE_LANGUAGE:ASM>:${ASM_OPTIMIZATION_FLAG}>)
+zephyr_compile_options($<$<COMPILE_LANGUAGE:C>:${COMPILER_OPTIMIZATION_FLAG}>)
+zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:${COMPILER_OPTIMIZATION_FLAG}>)
 
 if(CONFIG_LTO)
   zephyr_compile_options($<TARGET_PROPERTY:compiler,optimization_lto>)
@@ -1695,8 +1731,12 @@ list(APPEND
 list(APPEND post_build_byproducts ${KERNEL_MAP_NAME})
 
 # Use ';' as separator to get proper space in resulting command.
-set(gap_fill_prop "$<TARGET_PROPERTY:bintools,elfconvert_flag_gapfill>")
-set(gap_fill "$<$<BOOL:${gap_fill_prop}>:${gap_fill_prop}${CONFIG_BUILD_GAP_FILL_PATTERN}>")
+# Ignore gapfill for RX target as some RX toolchains generate wrong output image when running
+# gapfill for binary format.
+if(NOT CONFIG_RX)
+  set(gap_fill_prop "$<TARGET_PROPERTY:bintools,elfconvert_flag_gapfill>")
+  set(gap_fill "$<$<BOOL:${gap_fill_prop}>:${gap_fill_prop}${CONFIG_BUILD_GAP_FILL_PATTERN}>")
+endif()
 
 if(CONFIG_OUTPUT_PRINT_MEMORY_USAGE)
   target_link_libraries(${logical_target_for_zephyr_elf} $<TARGET_PROPERTY:linker,memusage>)
@@ -1899,10 +1939,13 @@ if(CONFIG_BUILD_OUTPUT_S19)
 endif()
 
 if(CONFIG_OUTPUT_DISASSEMBLY)
-if(CONFIG_OUTPUT_DISASSEMBLE_ALL)
+  if(CONFIG_OUTPUT_DISASSEMBLE_ALL)
     set(disassembly_type "$<TARGET_PROPERTY:bintools,disassembly_flag_all>")
-  elseif (CONFIG_OUTPUT_DISASSEMBLY_WITH_SOURCE)
+  elseif(CONFIG_OUTPUT_DISASSEMBLY_WITH_SOURCE)
     set(disassembly_type "$<TARGET_PROPERTY:bintools,disassembly_flag_inline_source>")
+  endif()
+  if(CONFIG_OUTPUT_DISASSEMBLY_NO_ALIASES)
+    list(APPEND disassembly_type "$<TARGET_PROPERTY:bintools,disassembly_flag_no_aliases>")
   endif()
   list(APPEND
     post_build_commands
